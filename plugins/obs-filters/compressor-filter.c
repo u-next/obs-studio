@@ -90,7 +90,6 @@ struct compressor_data {
 	pthread_mutex_t sidechain_update_mutex;
 	
 	size_t max_sidechain_frames;
-    //struct sidechain sidechain;
     
     DARRAY(struct sidechain) sidechains;
 };
@@ -133,10 +132,12 @@ static inline void get_sidechain_data(struct compressor_data *cd,
 
 clear:
     for (size_t ix = 0; ix < cd->sidechains.num; ix += 1) {
-        //struct sidechain *sidechain = &cd->sidechains.array[ix];
+        struct sidechain *sidechain = &cd->sidechains.array[ix];
+        pthread_mutex_lock(&sidechain->mutex);
         for (size_t i = 0; i < cd->num_channels; i++) {
-            //memset(sidechain->buf[i], 0, data_size);
+            memset(sidechain->buf[i], 0, data_size);
         }
+        pthread_mutex_unlock(&sidechain->mutex);
     }
 }
 
@@ -147,10 +148,13 @@ static void resize_env_buffer(struct compressor_data *cd, size_t len)
 
     for (size_t ix = 0; ix < cd->sidechains.num; ix += 1) {
         struct sidechain *sidechain = &cd->sidechains.array[ix];
+        pthread_mutex_lock(&sidechain->mutex);
         for (size_t i = 0; i < cd->num_channels; i++) {
+            
             sidechain->buf[i] =
             brealloc(sidechain->buf[i], len * sizeof(float));
         }
+        pthread_mutex_unlock(&sidechain->mutex);
     }
 }
 
@@ -215,7 +219,7 @@ static void clear_sidechains(struct compressor_data *cd) {
         obs_source_t *old_source = obs_weak_source_get_source(sidechain->weak_ref);
         
         if (old_source) {
-            obs_source_remove_audio_capture_callback(old_source, sidechain_capture, cd);
+            obs_source_remove_audio_capture_callback(old_source, sidechain_capture, sidechain);
             obs_source_release(old_source);
         }
         
@@ -228,6 +232,8 @@ static void clear_sidechains(struct compressor_data *cd) {
             bfree(sidechain->name);
             sidechain->name = NULL;
         }
+        
+        pthread_mutex_destroy(&sidechain->mutex);
     }
     
     da_clear(cd->sidechains);
@@ -261,7 +267,9 @@ static void compressor_update(void *data, obs_data_t *s)
 	cd->slope = 1.0f - (1.0f / cd->ratio);
     
     // reset callbacks and cleanup after ourselves before updating list
+    pthread_mutex_lock(&cd->sidechain_update_mutex);
     clear_sidechains(cd);
+    pthread_mutex_unlock(&cd->sidechain_update_mutex);
     
     size_t erased_count = 0;
     for (size_t ix = 0; ix < sidechain_count; ix += 1) {
@@ -293,8 +301,8 @@ static void compressor_update(void *data, obs_data_t *s)
     }
 
 	size_t sample_len = sample_rate * DEFAULT_AUDIO_BUF_MS / MS_IN_S;
-	if (cd->envelope_buf_len == 0)
-		resize_env_buffer(cd, sample_len);
+    
+    resize_env_buffer(cd, sample_len);
 }
 
 static void *compressor_create(obs_data_t *settings, obs_source_t *filter)
@@ -409,7 +417,9 @@ static void analyze_sidechain(struct compressor_data *cd,
                 envelope_buf[i] = fmaxf(envelope_buf[i], env);
             }
             // we don't need to check any other sidechains if we have successfully found one.
-            goto continue_outer;
+            // TODO(Ben): the goal of this logic is to short-circuit the check, but this logic unfortunately
+            // is applied to a /muted/ source too...
+            //goto continue_outer;
         }
     continue_outer:;
     }
@@ -442,16 +452,17 @@ static void compressor_tick(void *data, float seconds)
         struct sidechain *sidechain = &cd->sidechains.array[ix];
         // is this a sidechain just created by update()?
         if (sidechain->name && !sidechain->weak_ref) {
+            pthread_mutex_lock(&cd->sidechain_update_mutex);
+
             obs_source_t *source = obs_get_source_by_name(sidechain->name);
             obs_weak_source_t *weak_sidechain = obs_source_get_weak_source(source);
             
-            pthread_mutex_lock(&cd->sidechain_update_mutex);
             
             sidechain->weak_ref = weak_sidechain;
             
             pthread_mutex_unlock(&cd->sidechain_update_mutex);
             
-            obs_source_add_audio_capture_callback(source, sidechain_capture, cd);
+            obs_source_add_audio_capture_callback(source, sidechain_capture, sidechain);
             obs_source_release(source);
         }
     }
