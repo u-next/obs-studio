@@ -96,12 +96,6 @@ struct compressor_data {
 
 /* -------------------------------------------------------- */
 
-/*static inline obs_source_t *get_sidechain(struct compressor_data *cd)
-{
-	if (cd->sidechain.weak_ref)
-		return obs_weak_source_get_source(cd->sidechain.weak_ref);
-	return NULL;
-}*/
 
 static inline void get_sidechain_data(struct compressor_data *cd,
 				      const uint32_t num_samples)
@@ -118,25 +112,17 @@ static inline void get_sidechain_data(struct compressor_data *cd,
             sidechain->max_frames = num_samples;
         
         if (sidechain->data[0].size < data_size) {
+            for (size_t i = 0; i < cd->num_channels; i++) {
+                memset(sidechain->buf[i], 0, data_size);
+            }
             pthread_mutex_unlock(&sidechain->mutex);
-            goto clear;
+            continue;
         }
         
         for (size_t i = 0; i < cd->num_channels; i++)
             deque_pop_front(&sidechain->data[i], sidechain->buf[i],
                             data_size);
         
-        pthread_mutex_unlock(&sidechain->mutex);
-    }
-	return;
-
-clear:
-    for (size_t ix = 0; ix < cd->sidechains.num; ix += 1) {
-        struct sidechain *sidechain = &cd->sidechains.array[ix];
-        pthread_mutex_lock(&sidechain->mutex);
-        for (size_t i = 0; i < cd->num_channels; i++) {
-            memset(sidechain->buf[i], 0, data_size);
-        }
         pthread_mutex_unlock(&sidechain->mutex);
     }
 }
@@ -368,6 +354,7 @@ static void analyze_envelope(struct compressor_data *cd, float **samples,
 				env = env_in + release_gain * (env - env_in);
 			}
 			envelope_buf[i] = fmaxf(envelope_buf[i], env);
+            
 		}
 	}
 	cd->envelope = cd->envelope_buf[num_samples - 1];
@@ -404,13 +391,14 @@ static void analyze_sidechain(struct compressor_data *cd,
                     env = env_in + release_gain * (env - env_in);
                 }
                 envelope_buf[i] = fmaxf(envelope_buf[i], env);
+                
             }
             // we don't need to check any other sidechains if we have successfully found one.
             // TODO(Ben): the goal of this logic is to short-circuit the check, but this logic unfortunately
             // is applied to a /muted/ source too...
             //goto continue_outer;
         }
-    continue_outer:;
+    //continue_outer:;
     }
 	cd->envelope = cd->envelope_buf[num_samples - 1];
 }
@@ -496,7 +484,6 @@ static void compressor_defaults(obs_data_t *s)
 	obs_data_set_default_int(s, S_ATTACK_TIME, 6);
 	obs_data_set_default_int(s, S_RELEASE_TIME, 60);
 	obs_data_set_default_double(s, S_OUTPUT_GAIN, 0.0f);
-    // TODO(Ben): Clear editable list on default.
 }
 
 static obs_properties_t *compressor_properties(void *data)
