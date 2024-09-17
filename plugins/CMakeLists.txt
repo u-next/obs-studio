@@ -38,6 +38,7 @@ if(OBS_CMAKE_VERSION VERSION_GREATER_EQUAL 3.0.0)
     WITH_MESSAGE
   )
   add_obs_plugin(coreaudio-encoder PLATFORMS WINDOWS MACOS)
+  add_obs_plugin(channel-copier PLATFORMS WINDOWS MACOS)
   add_obs_plugin(
     decklink
     PLATFORMS WINDOWS MACOS LINUX
