@@ -61,6 +61,34 @@ static obs_properties_t *ccopier_filter_properites(void *data) {
     return props;
 }
 
+// apply gain to a given channel
+static inline void apply_gain(float *data, size_t frames, float gain_amount) {
+    for (size_t ix = 0; ix < frames; ix += 1) {
+        data[ix] *= gain_amount;
+    }
+}
+
+// apply a simple hardcoded gain to a given 7.1 surround audio channel
+static obs_audio_data *ccopier_filter_audio(void *data, obs_audio_data *audio) {
+    UNUSED_PARAMETER(data);
+    float **samples = reinterpret_cast<float **>(audio->data); // 8 planes
+    const size_t frames = audio->frames;
+
+    // track 1
+    apply_gain(samples[0], frames, 10.0);
+    apply_gain(samples[1], frames, 10.0);
+    
+    // track 2
+    apply_gain(samples[2], frames, 3.0);
+    apply_gain(samples[3], frames, 3.0);
+    
+    // track 3
+    apply_gain(samples[6], frames, 1.0);
+    apply_gain(samples[7], frames, 1.0);
+    
+    return audio;
+}
+
 struct obs_source_info copier_source = {
     .id = "copier_filter",
     .version = 2,
