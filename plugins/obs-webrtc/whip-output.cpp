@@ -1,6 +1,6 @@
 #include "whip-output.h"
 #include "whip-utils.h"
-
+#pragma warning(suppress : 4996)
 /*
  * Sets the maximum size for a video fragment. Effective range is
  * 576-1470, with a lower value equating to more packets created,
@@ -99,7 +99,10 @@ void WHIPOutput::Data(struct encoder_packet *packet)
 void WHIPOutput::ConfigureAudioTrack(std::string media_stream_id,
 				     std::string cname)
 {
-	auto media_stream_track_id = std::string(media_stream_id + "-audio");
+	UNUSED_PARAMETER(media_stream_id);
+	UNUSED_PARAMETER(cname);
+	/*auto media_stream_track_id =
+		std::string(media_stream_id + "-audio");
 
 	uint32_t ssrc = base_ssrc;
 
@@ -121,13 +124,16 @@ void WHIPOutput::ConfigureAudioTrack(std::string media_stream_id,
 		std::make_shared<rtc::OpusPacketizationHandler>(packetizer);
 	opus_handler->addToChain(audio_sr_reporter);
 	opus_handler->addToChain(nack_responder);
-	audio_track->setMediaHandler(opus_handler);
+	audio_track->setMediaHandler(opus_handler);*/
 }
 
 void WHIPOutput::ConfigureVideoTrack(std::string media_stream_id,
 				     std::string cname)
 {
-	auto media_stream_track_id = std::string(media_stream_id + "-video");
+	UNUSED_PARAMETER(media_stream_id);
+	UNUSED_PARAMETER(cname);
+	/* auto media_stream_track_id =
+		std::string(media_stream_id + "-video");
 
 	// More predictable SSRC values between audio and video
 	uint32_t ssrc = base_ssrc + 1;
@@ -152,7 +158,7 @@ void WHIPOutput::ConfigureVideoTrack(std::string media_stream_id,
 		std::make_shared<rtc::H264PacketizationHandler>(packetizer);
 	h264_handler->addToChain(video_sr_reporter);
 	h264_handler->addToChain(nack_responder);
-	video_track->setMediaHandler(h264_handler);
+	video_track->setMediaHandler(h264_handler);*/
 }
 
 /**
