@@ -24,148 +24,118 @@
 // This is quite a simple copier wrapper just to contain
 // the values set within the UI.
 struct ccopier_filter_t {
-	float gain_1;
-	float gain_2;
-	float gain_3;
-	float gain_4;
+	float gain_percent;
 };
-
 
 static const char *ccopier_filter_get_name(void *unused)
 {
-    UNUSED_PARAMETER(unused);
-    return obs_module_text("Channel Mixer");
+	UNUSED_PARAMETER(unused);
+	return obs_module_text("Channel Mixer");
 }
 
-static void *ccopier_filter_create(obs_data_t *settings, obs_source_t *ctx) {
-    UNUSED_PARAMETER(settings);
-    UNUSED_PARAMETER(ctx);
+static void *ccopier_filter_create(obs_data_t *settings, obs_source_t *ctx)
+{
+	UNUSED_PARAMETER(settings);
+	UNUSED_PARAMETER(ctx);
 
-    struct ccopier_filter_t *ccopier = bzalloc(sizeof(struct ccopier_filter_t));
-    ccopier->gain_1 = 1.0f;
-    ccopier->gain_2 = 1.0f;
-    ccopier->gain_3 = 1.0f;
-    ccopier->gain_4 = 1.0f;
+	struct ccopier_filter_t *ccopier =
+		bzalloc(sizeof(struct ccopier_filter_t));
+	ccopier->gain_percent = 50.0;
 
-        printf("%f %f %f %f\n", ccopier->gain_1, ccopier->gain_2, ccopier->gain_3,
-	   ccopier->gain_4);
-
-    return ccopier;
+	return ccopier;
 }
 
-static void ccopier_filter_destroy(void *data) {
+static void ccopier_filter_destroy(void *data)
+{
 	bfree(data);
-    return;
-}
-
-static void ccopier_filter_update(void *data, obs_data_t *settings) {
-	struct ccopier_filter_t *ccopier = (struct ccopier_filter_t *)data;
-
-	    printf("%f %f %f %f\n", ccopier->gain_1, ccopier->gain_2,
-	       ccopier->gain_3, ccopier->gain_4);
-
-	ccopier->gain_1 = obs_db_to_mul((float)obs_data_get_double(settings, "db_ch1"));
-	ccopier->gain_2 = obs_db_to_mul((float)obs_data_get_double(settings, "db_ch2"));
-	ccopier->gain_3 =
-		obs_db_to_mul((float)obs_data_get_double(settings, "db_ch3"));
-	ccopier->gain_4 = obs_db_to_mul((float)obs_data_get_double(settings, "db_ch4"));
 	return;
 }
 
-static void ccopier_filter_tick(void *data, float seconds) {
-    UNUSED_PARAMETER(data);
-    UNUSED_PARAMETER(seconds);
-    return;
+static void ccopier_filter_update(void *data, obs_data_t *settings)
+{
+	struct ccopier_filter_t *ccopier = (struct ccopier_filter_t *)data;
+
+	ccopier->gain_percent = obs_db_to_mul(
+		(float)obs_data_get_double(settings, "mix_percent"));
+	return;
 }
 
-static void ccopier_filter_defaults(obs_data_t *s) {
-	obs_data_set_default_double(s, "db_ch1", 0.0f);
-	obs_data_set_default_double(s, "db_ch2", 0.0f);
-	obs_data_set_default_double(s, "db_ch3", 0.0f);
-	obs_data_set_default_double(s, "db_ch4", 0.0f);
-    return;
+static void ccopier_filter_tick(void *data, float seconds)
+{
+	UNUSED_PARAMETER(data);
+	UNUSED_PARAMETER(seconds);
+	return;
 }
 
-static obs_properties_t *ccopier_filter_properites(void *data) {
-    UNUSED_PARAMETER(data);
-    obs_properties_t *props = obs_properties_create();
-
-    obs_property_t *p_1 = obs_properties_add_float_slider(props, "db_ch1", "ch1/2", -30.0, 30.0, 0.1);
-    obs_property_float_set_suffix(p_1, " db");
-
-        obs_property_t *p_2 = obs_properties_add_float_slider(
-	    props, "db_ch2", "ch3/4", -30.0, 30.0, 0.1);
-    obs_property_float_set_suffix(p_2, " db");
-
-        obs_property_t *p_3 = obs_properties_add_float_slider(
-	    props, "db_ch3", "ch4/5", -30.0, 30.0, 0.1);
-    obs_property_float_set_suffix(p_3, " db");
-
-        obs_property_t *p_4 = obs_properties_add_float_slider(
-	    props, "db_ch4", "ch6/7", -30.0, 30.0, 0.1);
-    obs_property_float_set_suffix(p_4, " db");
-    
-    return props;
+static void ccopier_filter_defaults(obs_data_t *s)
+{
+	obs_data_set_default_double(s, "mix_percent", 50.0f);
+	return;
 }
 
-// apply gain to a given channel
-static inline void apply_gain(float *data, size_t frames, float gain_amount) {
-    for (size_t ix = 0; ix < frames; ix += 1) {
-        data[ix] *= gain_amount;
-    }
+static obs_properties_t *ccopier_filter_properites(void *data)
+{
+	UNUSED_PARAMETER(data);
+	obs_properties_t *props = obs_properties_create();
+
+	// note that this percentage represents a /ratio/ between two channels
+	obs_property_t *p = obs_properties_add_float_slider(
+		props, "mix_percent", "mix percent", 0, 100.0, 0.1);
+	obs_property_float_set_suffix(p, "%");
+
+	return props;
 }
 
-// apply a simple hardcoded gain to a given 7.1 surround audio channel
-static struct obs_audio_data *ccopier_filter_audio(void *data, struct obs_audio_data *audio) {
-    struct ccopier_filter_t *ccopier = (struct ccopier_filter_t *)data;
-    float **samples = (float **)(audio->data); // 8 planes
-    const size_t frames = audio->frames;
+static inline void apply_gain(size_t frames, float *source_1, float *source_2,
+			      float *dst, float ratio)
+{
+	for (size_t ix = 0; ix < frames; ix += 1) {
+		dst[ix] = (source_1[ix] * ratio) + (source_2[ix] * (1 - ratio));
+	}
+}
 
-    printf("%f %f %f %f\n", ccopier->gain_1, ccopier->gain_2, ccopier->gain_3,
-	   ccopier->gain_4);
-    // track 1
-    apply_gain(samples[0], frames, ccopier->gain_1);
-    apply_gain(samples[1], frames, ccopier->gain_1);
-    
-    // track 2
-    apply_gain(samples[2], frames, ccopier->gain_2);
-    apply_gain(samples[3], frames, ccopier->gain_2);
+static struct obs_audio_data *ccopier_filter_audio(void *data,
+						   struct obs_audio_data *audio)
+{
+	struct ccopier_filter_t *ccopier = (struct ccopier_filter_t *)data;
+	float **samples = (float **)(audio->data); // 8 planes
+	const size_t frames = audio->frames;
 
-    // track 3
-    apply_gain(samples[4], frames, ccopier->gain_3);
-    apply_gain(samples[5], frames, ccopier->gain_3);
-    
-    // track 4
-    apply_gain(samples[6], frames, ccopier->gain_4);
-    apply_gain(samples[7], frames, ccopier->gain_4);
-    
-    return audio;
+	// 1 <- (5 + 7)
+	// 2 <- (6 + 8)
+	apply_gain(frames, samples[4], samples[6], samples[0],
+		   ccopier->gain_percent);
+
+	apply_gain(frames, samples[5], samples[7], samples[1],
+		   ccopier->gain_percent);
+
+	return audio;
 }
 
 struct obs_source_info copier_source = {
-    .id = "copier_filter",
-    .version = 2,
-    .type = OBS_SOURCE_TYPE_FILTER,
-    .output_flags = OBS_SOURCE_AUDIO,
-    .get_name = ccopier_filter_get_name,
-    .create = ccopier_filter_create,
-    .destroy = ccopier_filter_destroy,
-    .update = ccopier_filter_update,
-    .video_tick = ccopier_filter_tick,
-    .filter_audio = ccopier_filter_audio,
-    .get_defaults = ccopier_filter_defaults,
-    .get_properties = ccopier_filter_properites,
+	.id = "copier_filter",
+	.version = 2,
+	.type = OBS_SOURCE_TYPE_FILTER,
+	.output_flags = OBS_SOURCE_AUDIO,
+	.get_name = ccopier_filter_get_name,
+	.create = ccopier_filter_create,
+	.destroy = ccopier_filter_destroy,
+	.update = ccopier_filter_update,
+	.video_tick = ccopier_filter_tick,
+	.filter_audio = ccopier_filter_audio,
+	.get_defaults = ccopier_filter_defaults,
+	.get_properties = ccopier_filter_properites,
 };
 
 OBS_DECLARE_MODULE()
 OBS_MODULE_USE_DEFAULT_LOCALE("channel-copier", "en-US")
 MODULE_EXPORT const char *obs_module_description(void)
 {
-    return "Mux up to channel count / 2 sources into a single output.";
+	return "Mux up to channel count / 2 sources into a single output.";
 }
 
 bool obs_module_load(void)
 {
-    obs_register_source(&copier_source);
+	obs_register_source(&copier_source);
 	return true;
 }
