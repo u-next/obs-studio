@@ -89,8 +89,10 @@ static obs_properties_t *ccopier_filter_properites(void *data)
 static inline void apply_gain(size_t frames, float *source_1, float *source_2,
 			      float *dst, float ratio)
 {
+	const float percentage = ratio / 100.0f;
 	for (size_t ix = 0; ix < frames; ix += 1) {
-		dst[ix] = (source_1[ix] * ratio) + (source_2[ix] * (1 - ratio));
+		dst[ix] = (source_1[ix] * percentage) +
+			  (source_2[ix] * (1 - percentage));
 	}
 }
 
