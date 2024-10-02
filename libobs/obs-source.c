@@ -31,6 +31,12 @@
 #include "obs.h"
 #include "obs-internal.h"
 
+// attempt to hack in a timing adjust only ever affected by one
+// single video source in order to enforce synchronization between
+// all audio and a single video when not decoupled.
+static uint64_t _timing_adjust = 0;
+//static bool _timing_set = false;
+
 #define get_weak(source) ((obs_weak_source_t *)source->context.control)
 
 static bool filter_compatible(obs_source_t *source, obs_source_t *filter);
@@ -1530,6 +1536,8 @@ static inline bool source_muted(obs_source_t *source, uint64_t os_time)
 	       (source->push_to_talk_enabled && !push_to_talk_active);
 }
 
+FILE *fp = NULL;
+
 static void source_output_audio_data(obs_source_t *source,
 				     const struct audio_data *data)
 {
@@ -1540,6 +1548,7 @@ static void source_output_audio_data(obs_source_t *source,
 	int64_t sync_offset;
 	bool using_direct_ts = false;
 	bool push_back = false;
+    int64_t base_time = in.timestamp;
 
 	/* detects 'directly' set timestamps as long as they're within
 	 * a certain threshold */
@@ -1575,7 +1584,8 @@ static void source_output_audio_data(obs_source_t *source,
 	source->next_audio_ts_min =
 		in.timestamp + conv_frames_to_time(sample_rate, in.frames);
 
-	in.timestamp += source->timing_adjust;
+	//in.timestamp += source->timing_adjust;
+	in.timestamp += _timing_adjust;
 
 	pthread_mutex_lock(&source->audio_buf_mutex);
 
@@ -1596,7 +1606,7 @@ static void source_output_audio_data(obs_source_t *source,
 			 * just clear the audio data in that small window and force a
 			 * resync.  This handles all cases rather than just looping. */
 			reset_audio_timing(source, data->timestamp, os_time);
-			in.timestamp = data->timestamp + source->timing_adjust;
+            in.timestamp = data->timestamp + _timing_adjust; //+ source->timing_adjust;
 		}
 	}
 
@@ -1604,8 +1614,11 @@ static void source_output_audio_data(obs_source_t *source,
 	in.timestamp += sync_offset;
 	in.timestamp -= source->resample_offset;
 
+	//	source->next_audio_sys_ts_min =
+	//		source->next_audio_ts_min + source->timing_adjust;
+
 	source->next_audio_sys_ts_min =
-		source->next_audio_ts_min + source->timing_adjust;
+		source->next_audio_ts_min; //+ _timing_adjust;
 
 	if (source->last_sync_offset != sync_offset) {
 		if (source->last_sync_offset)
@@ -1619,6 +1632,13 @@ static void source_output_audio_data(obs_source_t *source,
 		else
 			source_output_audio_place(source, &in);
 	}
+
+	if (fp == NULL) {
+		fp = fopen("/tmp/out.csv", "w");
+	}
+
+	fprintf(fp, "%s,%lld,%lld,%lld,%lld,%lld,%lld,%lld\n", source->context.name, base_time, in.timestamp, _timing_adjust, source->timing_adjust, source->next_audio_ts_min, source->next_audio_sys_ts_min, source->sync_offset);
+    fflush(fp);
 
 	pthread_mutex_unlock(&source->audio_buf_mutex);
 
@@ -2560,6 +2580,7 @@ static inline void check_to_swap_bgrx_bgra(obs_source_t *source,
 
 static void obs_source_update_async_video(obs_source_t *source)
 {
+
 	if (!source->async_rendered) {
 		source->async_rendered = true;
 
@@ -2569,9 +2590,19 @@ static void obs_source_update_async_video(obs_source_t *source)
 
 			if (!source->async_decoupled ||
 			    !source->async_unbuffered) {
-				source->timing_adjust = obs->video.video_time -
-							frame->timestamp;
+				/* source->timing_adjust = obs->video.video_time - */
+				/* 			frame->timestamp; */
+				/* source->timing_set = true; */
+
 				source->timing_set = true;
+				/* only apply to a single source, decided ahead of time. */
+				if (source->context.name[1] == '1') {
+					_timing_adjust = obs->video.video_time -
+							 frame->timestamp;
+
+					//fprintf(fp, "%llu,%llu\n", frame->timestamp, _timing_adjust);
+					//_timing_set = true;
+				}
 			}
 
 			if (source->async_update_texture) {
@@ -3029,6 +3060,11 @@ static inline void render_video(obs_source_t *source)
 
 	else
 		obs_source_render_async_video(source);
+    
+    if (fp != NULL) {
+        fprintf(fp, "VIDEO %s,%llu\n", source->context.name, obs->video.video_time);
+        fflush(fp);
+    }
 
 	GS_DEBUG_MARKER_END();
 }
