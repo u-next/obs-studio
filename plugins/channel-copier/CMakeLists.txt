@@ -5,7 +5,7 @@ legacy_check()
 add_library(channel-copier MODULE)
 add_library(OBS::channel-copier ALIAS channel-copier)
 
-target_sources(channel-copier PRIVATE channel-copier.cpp)
+target_sources(channel-copier PRIVATE channel-copier.c)
 
 target_link_libraries(
  channel-copier
