@@ -96,7 +96,7 @@ static struct obs_audio_data *ccopier_filter_audio(void *data,
 				     populate_zero_count);
 
 		// otherwise, grab all of the data in the deque.
-		deque_pop_front(&ccopier->source_data[ix], audio->data[ix],
+		deque_pop_front(&ccopier->source_data[ix], audio->data[ix + ccopier->mapped_channel],
 				audio->frames);
 	}
 
@@ -104,8 +104,6 @@ static struct obs_audio_data *ccopier_filter_audio(void *data,
 
 	return audio;
 }
-
-static bool _once = false;
 
 static void ccopier_filter_update(void *data, obs_data_t *settings)
 {
@@ -118,6 +116,9 @@ static void ccopier_filter_update(void *data, obs_data_t *settings)
 	if (!valid_sidechain) {
 		return;
 	}
+    
+    /* get the matched channel */
+    ccopier->mapped_channel = obs_data_get_int(settings, "ccopier_chan") * 2;
 
 	pthread_mutex_lock(&ccopier->mutex);
 
@@ -127,9 +128,8 @@ static void ccopier_filter_update(void *data, obs_data_t *settings)
 
 	ccopier->source = weak_ref;
 
-	if (source && !_once) {
+	if (source) {
 		obs_source_add_audio_capture_callback(source, capture, ccopier);
-        _once = true;
 
 		//obs_weak_source_release(weak_ref);
 		obs_source_release(source);
@@ -204,6 +204,8 @@ static obs_properties_t *ccopier_filter_properites(void *data)
 	//struct channel_copier *ccopier = data;
 	UNUSED_PARAMETER(data);
 	obs_properties_t *props = obs_properties_create();
+    
+    obs_properties_add_int(props, "ccopier_chan", "Track", 0, 3, 1);
 
 	obs_property_t *sources = obs_properties_add_list(
 		props, "ccopier_source", "Compressor.SidechainSource",
