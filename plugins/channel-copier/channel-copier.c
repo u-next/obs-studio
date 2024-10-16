@@ -47,7 +47,7 @@ static void capture(void *param, obs_source_t *source,
 	size_t expected_size = audio_data->frames * sizeof(float);
 
 	/* free up space for more current data */
-	 (ccopier->source_data[0].size > expected_size * 2) {
+	if (ccopier->source_data[0].size > expected_size * 2) {
 		for (size_t i = 0; i < NUM_CHANNELS; i++) {
 			deque_pop_front(&ccopier->source_data[i], NULL,
 					expected_size);
@@ -108,6 +108,14 @@ static struct obs_audio_data *ccopier_filter_audio(void *data,
 static void ccopier_filter_update(void *data, obs_data_t *settings)
 {
 	struct channel_copier *ccopier = data;
+    
+    if (ccopier->source) {
+        obs_source_t *old_source = obs_weak_source_get_source(ccopier->source);
+        if (old_source) {
+            obs_source_remove_audio_capture_callback(old_source, capture, ccopier);
+        }
+    }
+    
 	const char *sidechain_name =
 		obs_data_get_string(settings, "ccopier_source");
 
