@@ -47,7 +47,7 @@ static void capture(void *param, obs_source_t *source,
 	size_t expected_size = audio_data->frames * sizeof(float);
 
 	/* free up space for more current data */
-	if (ccopier->source_data[0].size > expected_size * 2) {
+	 (ccopier->source_data[0].size > expected_size * 2) {
 		for (size_t i = 0; i < NUM_CHANNELS; i++) {
 			deque_pop_front(&ccopier->source_data[i], NULL,
 					expected_size);
@@ -59,7 +59,7 @@ static void capture(void *param, obs_source_t *source,
 	// that copies from other sources to allow MIDI interfaces etc. to control individual
 	// channels of a source. If you want to mute, mute this.
 	for (size_t ix = 0; ix < NUM_CHANNELS; ix += 1) {
-		deque_push_back(&ccopier->source_data[ix], audio_data->data[ix],
+		deque_push_back(&ccopier->source_data[ix], audio_data->data[ix + ccopier->mapped_channel],
 				audio_data->frames * sizeof(float));
 	}
 
@@ -96,7 +96,7 @@ static struct obs_audio_data *ccopier_filter_audio(void *data,
 				     populate_zero_count);
 
 		// otherwise, grab all of the data in the deque.
-		deque_pop_front(&ccopier->source_data[ix], audio->data[ix + ccopier->mapped_channel],
+		deque_pop_front(&ccopier->source_data[ix], audio->data[ix],
 				audio->frames);
 	}
 
