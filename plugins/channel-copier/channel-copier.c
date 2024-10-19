@@ -82,9 +82,9 @@ static struct obs_audio_data *ccopier_filter_audio(void *data,
 		memset(audio->data[ix], 0x00, audio->frames * sizeof(float));
 	}
 
-	if (audio->frames > ccopier->source_data[0].size) {
+	if (audio->frames * sizeof(float) > ccopier->source_data[0].size) {
 		populate_zero_count =
-		    audio->frames - ccopier->source_data[0].size;
+		    audio->frames * sizeof(float) - ccopier->source_data[0].size;
 	}
 
 	// copy over the source data to the target in order.
@@ -97,7 +97,7 @@ static struct obs_audio_data *ccopier_filter_audio(void *data,
 
 		// otherwise, grab all of the data in the deque.
 		deque_pop_front(&ccopier->source_data[ix], audio->data[ix],
-				audio->frames);
+				audio->frames * sizeof(float));
 	}
 
 	pthread_mutex_unlock(&ccopier->mutex);
