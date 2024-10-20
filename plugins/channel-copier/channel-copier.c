@@ -77,11 +77,6 @@ static struct obs_audio_data *ccopier_filter_audio(void *data,
 
 	size_t populate_zero_count = 0;
 
-	/* clear out whatever noise may be in the carrier channel. */
-	for (size_t ix = 0; ix < NUM_CHANNELS; ix += 1) {
-		memset(audio->data[ix], 0x00, audio->frames * sizeof(float));
-	}
-
 	if (audio->frames * sizeof(float) > ccopier->source_data[0].size) {
 		populate_zero_count =
 		    audio->frames * sizeof(float) - ccopier->source_data[0].size;
