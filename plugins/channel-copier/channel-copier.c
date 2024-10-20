@@ -47,10 +47,10 @@ static void capture(void *param, obs_source_t *source,
 
 	pthread_mutex_lock(&ccopier->mutex);
 
-	// to avoid syncing issue, we only allow max 60ms of buffer
-	// but if 80ms is shorter than 2x of the captures chunk size, use the latter
+	// to avoid syncing issue, we only allow max 80ms of buffer
+	// but if that is shorter than 2x of the captures chunk size, use the latter
 	size_t captured_chunk_size = audio_data->frames * sizeof(float);
-	size_t max_buffer_size = ccopier -> sample_rate * 60 / 1000 * sizeof(float);
+	size_t max_buffer_size = ccopier -> sample_rate * 80 / 1000 * sizeof(float);
 	if (max_buffer_size < captured_chunk_size * 2) {
 		max_buffer_size =  captured_chunk_size * 2;
 	}
@@ -62,7 +62,7 @@ static void capture(void *param, obs_source_t *source,
 			deque_pop_front(&ccopier->source_data[i], NULL, num_of_bytes_to_be_discarded);
 		}
 		blog(LOG_WARNING, "channel-copier: overflow, "
-		"%lu samples have been discarded", num_of_bytes_to_be_discarded / sizeof(float));
+		"%lu samples discarded", num_of_bytes_to_be_discarded / sizeof(float));
 	}
 
 	// note that we're explicitly ignoring the possibility of the source
@@ -92,7 +92,7 @@ static struct obs_audio_data *ccopier_filter_audio(void *data,
 		populate_zero_count =
 			audio->frames * sizeof(float) - ccopier->source_data[0].size;
 		blog(LOG_WARNING, "channel-copier: underflow, "
-		"%lu samples will be filled with zero", populate_zero_count / sizeof(float));
+		"%lu samples filled with zero", populate_zero_count / sizeof(float));
 	}
 
 	// copy over the source data to the target in order.
@@ -226,7 +226,7 @@ static obs_properties_t *ccopier_filter_properites(void *data)
 	obs_properties_add_int(props, "ccopier_chan", "Track", 0, 3, 1);
 
 	obs_property_t *sources = obs_properties_add_list(
-		props, "ccopier_source", "Compressor.SidechainSource",
+		props, "ccopier_source", "Copy Source",
 		OBS_COMBO_TYPE_LIST, OBS_COMBO_FORMAT_STRING);
 
 	obs_property_list_add_string(sources, obs_module_text("None"), "none");
