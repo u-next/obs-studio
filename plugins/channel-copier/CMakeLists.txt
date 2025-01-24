@@ -1,7 +1,5 @@
 cmake_minimum_required(VERSION 3.24...3.25)
 
-legacy_check()
-
 add_library(channel-copier MODULE)
 add_library(OBS::channel-copier ALIAS channel-copier)
 
