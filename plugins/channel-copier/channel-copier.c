@@ -17,13 +17,13 @@ static const size_t NUM_CHANNELS = 2;
   We need to associate a source and a channel mapping to this source.
  */
 struct channel_copier {
-	obs_source_t *self;
-	size_t mapped_channel; /* we will map n, n+1 channels to the output of this source. */
+	/* we will map n, n+1 channels to the output of this source. */
+	size_t mapped_channel;
+
 	obs_weak_source_t *source;
 
 	/* save from the source to overwrite onto self. */
 	struct deque source_data[2];
-	float *data_buf;
 
 	/* store the sample rate of obs output */
 	uint32_t sample_rate;
@@ -117,38 +117,33 @@ static struct obs_audio_data *ccopier_filter_audio(void *data,
 static void ccopier_filter_update(void *data, obs_data_t *settings)
 {
 	struct channel_copier *ccopier = data;
-	
+
 	if (ccopier->source) {
 		obs_source_t *old_source = obs_weak_source_get_source(ccopier->source);
 		if (old_source) {
 			obs_source_remove_audio_capture_callback(old_source, capture, ccopier);
 		}
 	}
-	
-	const char *sidechain_name =
-		obs_data_get_string(settings, "ccopier_source");
 
-	bool valid_sidechain = *sidechain_name &&
-				   strcmp(sidechain_name, "none") != 0;
+	const char *sidechain_name = obs_data_get_string(settings, "ccopier_source");
+
+	bool valid_sidechain = *sidechain_name && strcmp(sidechain_name, "none") != 0;
 	if (!valid_sidechain) {
 		return;
 	}
-	
+
 	/* get the matched channel */
 	ccopier->mapped_channel = obs_data_get_int(settings, "ccopier_chan") * 2;
 
 	pthread_mutex_lock(&ccopier->mutex);
 
 	obs_source_t *source = obs_get_source_by_name(sidechain_name);
-	obs_weak_source_t *weak_ref =
-		source ? obs_source_get_weak_source(source) : NULL;
+	obs_weak_source_t *weak_ref = source ? obs_source_get_weak_source(source) : NULL;
 
 	ccopier->source = weak_ref;
 
 	if (source) {
 		obs_source_add_audio_capture_callback(source, capture, ccopier);
-
-		//obs_weak_source_release(weak_ref);
 		obs_source_release(source);
 	}
 
@@ -159,9 +154,20 @@ static void ccopier_filter_update(void *data, obs_data_t *settings)
 
 static void ccopier_filter_destroy(void *data)
 {
-	UNUSED_PARAMETER(data);
-	// TODO(free and clean up)
-	return;
+	struct channel_copier *ccopier = data;
+
+	pthread_mutex_destroy(&ccopier->mutex);
+
+	if (ccopier->source) {
+		obs_source_t *old_source = obs_weak_source_get_source(ccopier->source);
+		if (old_source) {
+			obs_source_remove_audio_capture_callback(old_source, capture, ccopier);
+		}
+	}
+
+	ccopier->source = NULL;
+
+	bfree(ccopier);
 }
 
 static void *ccopier_filter_create(obs_data_t *settings, obs_source_t *ctx)
@@ -171,7 +177,6 @@ static void *ccopier_filter_create(obs_data_t *settings, obs_source_t *ctx)
 
 	struct channel_copier *ccopier = bzalloc(sizeof(struct channel_copier));
 	ccopier->mapped_channel = INVALID_CHANNEL_SOURCE;
-	ccopier->self = ctx;
 	ccopier->source = NULL;
 	ccopier->sample_rate = audio_output_get_sample_rate(obs_get_audio());
 
@@ -179,7 +184,7 @@ static void *ccopier_filter_create(obs_data_t *settings, obs_source_t *ctx)
 		bfree(ccopier);
 		return NULL;
 	}
-	
+
 	/* We want to register callbacks immediately if possible */
 	ccopier_filter_update(ccopier, settings);
 
