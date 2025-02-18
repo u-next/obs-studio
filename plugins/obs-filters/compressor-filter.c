@@ -1,3 +1,4 @@
+#include <pthread.h>
 #include <stdint.h>
 #include <inttypes.h>
 #include <math.h>
@@ -348,6 +349,8 @@ static void analyze_sidechain(struct compressor_data *cd, const uint32_t num_sam
 
 	get_sidechain_data(cd, num_samples);
 
+	pthread_mutex_lock(&cd->sidechain_update_mutex);
+
 	const float attack_gain = cd->attack_gain;
 	const float release_gain = cd->release_gain;
 
@@ -383,6 +386,8 @@ static void analyze_sidechain(struct compressor_data *cd, const uint32_t num_sam
 	continue_outer:;
 	}
 	cd->envelope = cd->envelope_buf[num_samples - 1];
+
+	pthread_mutex_unlock(&cd->sidechain_update_mutex);
 }
 
 static inline void process_compression(const struct compressor_data *cd, float **samples, uint32_t num_samples)
