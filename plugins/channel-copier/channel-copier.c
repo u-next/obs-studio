@@ -22,6 +22,9 @@ struct channel_copier {
 
 	obs_weak_source_t *source;
 
+	/* the name of the source we pull data from*/
+	char *source_name;
+
 	/* save from the source to overwrite onto self. */
 	struct deque source_data[2];
 
@@ -123,31 +126,21 @@ static void ccopier_filter_update(void *data, obs_data_t *settings)
 		if (old_source) {
 			obs_source_remove_audio_capture_callback(old_source, capture, ccopier);
 		}
+
+		obs_weak_source_release(ccopier->source);
+		ccopier->source = NULL;
 	}
 
-	const char *sidechain_name = obs_data_get_string(settings, "ccopier_source");
+	const char *source_name = obs_data_get_string(settings, "ccopier_source");
 
-	bool valid_sidechain = *sidechain_name && strcmp(sidechain_name, "none") != 0;
-	if (!valid_sidechain) {
+	bool valid_source = *source_name && strcmp(source_name, "none") != 0;
+	if (!valid_source) {
 		return;
 	}
 
 	/* get the matched channel */
 	ccopier->mapped_channel = obs_data_get_int(settings, "ccopier_chan") * 2;
-
-	pthread_mutex_lock(&ccopier->mutex);
-
-	obs_source_t *source = obs_get_source_by_name(sidechain_name);
-	obs_weak_source_t *weak_ref = source ? obs_source_get_weak_source(source) : NULL;
-
-	ccopier->source = weak_ref;
-
-	if (source) {
-		obs_source_add_audio_capture_callback(source, capture, ccopier);
-		obs_source_release(source);
-	}
-
-	pthread_mutex_unlock(&ccopier->mutex);
+	ccopier->source_name = bstrdup(source_name);
 
 	return;
 }
@@ -163,9 +156,15 @@ static void ccopier_filter_destroy(void *data)
 		if (old_source) {
 			obs_source_remove_audio_capture_callback(old_source, capture, ccopier);
 		}
+
+		obs_weak_source_release(ccopier->source);
+		ccopier->source = NULL;
 	}
 
-	ccopier->source = NULL;
+	if (ccopier->source_name) {
+		bfree(ccopier->source_name);
+		ccopier->source_name = NULL;
+	}
 
 	bfree(ccopier);
 }
@@ -179,6 +178,7 @@ static void *ccopier_filter_create(obs_data_t *settings, obs_source_t *ctx)
 	ccopier->mapped_channel = INVALID_CHANNEL_SOURCE;
 	ccopier->source = NULL;
 	ccopier->sample_rate = audio_output_get_sample_rate(obs_get_audio());
+	ccopier->source_name = NULL;
 
 	if (pthread_mutex_init(&ccopier->mutex, NULL) != 0) {
 		bfree(ccopier);
@@ -191,10 +191,36 @@ static void *ccopier_filter_create(obs_data_t *settings, obs_source_t *ctx)
 	return ccopier;
 }
 
+// `update' is called before some other sources may have been loaded.
+// the net of this is that we cannot register the src source in `update'
+// and instead must defer until `tick' is called.
+// This is only an issue when OBS starts with the ccopier already setup.
 static void ccopier_filter_tick(void *data, float seconds)
 {
-	UNUSED_PARAMETER(data);
 	UNUSED_PARAMETER(seconds);
+	struct channel_copier *ccopier = data;
+
+	pthread_mutex_lock(&ccopier->mutex);
+
+	// we only want to perform any logic in the event that there was a change
+	// to the filter fielded by `update'.
+	if (ccopier->source_name == NULL || ccopier->source != NULL) {
+		pthread_mutex_unlock(&ccopier->mutex);
+		return;
+	}
+
+	obs_source_t *source = obs_get_source_by_name(ccopier->source_name);
+	obs_weak_source_t *weak_ref = source ? obs_source_get_weak_source(source) : NULL;
+
+	ccopier->source = weak_ref;
+
+	if (source) {
+		obs_source_add_audio_capture_callback(source, capture, ccopier);
+		obs_source_release(source);
+	}
+
+	pthread_mutex_unlock(&ccopier->mutex);
+
 	return;
 }
 
