@@ -596,8 +596,11 @@ static void *ffmpeg_source_create(obs_data_t *settings, obs_source_t *source)
 {
 	struct ffmpeg_source *s = bzalloc(sizeof(struct ffmpeg_source));
 	s->source = source;
+    
+    obs_source_set_async_decoupled(source, true);
+    obs_source_set_async_unbuffered(source, true);
 
-	// Manual type since the event can be signalled without an active thread
+    // Manual type since the event can be signalled without an active thread
 	if (os_event_init(&s->reconnect_stop_event, OS_EVENT_TYPE_MANUAL)) {
 		FF_BLOG(LOG_ERROR, "Failed to initialize reconnect stop event");
 		bfree(s);
