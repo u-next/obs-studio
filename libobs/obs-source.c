@@ -1425,6 +1425,9 @@ static inline bool source_muted(obs_source_t *source, uint64_t os_time)
 	       (source->push_to_talk_enabled && !push_to_talk_active);
 }
 
+uint64_t base_time_os = 0;
+uint64_t base_pts_time = 0;
+
 static void source_output_audio_data(obs_source_t *source, const struct audio_data *data)
 {
 	size_t sample_rate = audio_output_get_sample_rate(obs->audio.audio);
@@ -1434,6 +1437,17 @@ static void source_output_audio_data(obs_source_t *source, const struct audio_da
 	int64_t sync_offset;
 	bool using_direct_ts = false;
 	bool push_back = false;
+
+	/* first packet of any source will setup the /base/ timings. The rest will just be set in accordance */
+	if (base_time_os == 0 || in.timestamp < base_pts_time) {
+		base_time_os = os_gettime_ns();
+		base_pts_time = in.timestamp;
+		source->timing_set = true;
+		source->timing_adjust = 0;
+	}
+
+	/* now attempt to set the PTS to be in accordance with wallclock time */
+	in.timestamp = (in.timestamp - base_pts_time) + base_time_os;
 
 	/* detects 'directly' set timestamps as long as they're within
 	 * a certain threshold */
