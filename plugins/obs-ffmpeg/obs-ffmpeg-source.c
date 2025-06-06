@@ -195,6 +195,8 @@ static obs_properties_t *ffmpeg_source_getproperties(void *data)
 
 	obs_property_set_long_description(prop, obs_module_text("CloseFileWhenInactive.ToolTip"));
 
+	obs_properties_add_bool(props, "full_decode", "full_decode");
+
 	prop = obs_properties_add_int_slider(props, "speed_percent", obs_module_text("SpeedPercentage"), 1, 200, 1);
 	obs_property_int_set_suffix(prop, "%");
 
