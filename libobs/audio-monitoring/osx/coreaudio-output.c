@@ -1,7 +1,11 @@
+#include <AudioToolbox/AudioToolbox.h>
 #include <AudioUnit/AudioUnit.h>
 #include <AudioToolbox/AudioQueue.h>
+#include <CoreAudioTypes/CoreAudioTypes.h>
 #include <CoreFoundation/CFString.h>
 #include <CoreAudio/CoreAudio.h>
+#include <pthread.h>
+#include <stdint.h>
 
 #include "../../media-io/audio-resampler.h"
 #include "../../util/deque.h"
@@ -18,8 +22,11 @@ struct audio_monitor {
 	AudioQueueBufferRef buffers[3];
 
 	pthread_mutex_t mutex;
+	pthread_t thread;
+
 	struct deque empty_buffers;
 	struct deque new_data;
+	volatile uint64_t last_timestamp;
 	audio_resampler_t *resampler;
 	size_t buffer_size;
 	size_t wait_size;
@@ -30,6 +37,8 @@ struct audio_monitor {
 	bool ignore;
 };
 
+// note that the received timestamp is for the /most recent/ audio sample in the queue,
+// not for the first one in the set.
 static inline bool fill_buffer(struct audio_monitor *monitor)
 {
 	AudioQueueBufferRef buf;
@@ -45,6 +54,7 @@ static inline bool fill_buffer(struct audio_monitor *monitor)
 	buf->mAudioDataByteSize = (UInt32)monitor->buffer_size;
 
 	stat = AudioQueueEnqueueBuffer(monitor->queue, buf, 0, NULL);
+
 	if (!success(stat, "AudioQueueEnqueueBuffer")) {
 		blog(LOG_WARNING, "%s: %s", __FUNCTION__, "Failed to enqueue buffer");
 		AudioQueueStop(monitor->queue, false);
@@ -102,24 +112,51 @@ static void on_audio_playback(void *param, obs_source_t *source, const struct au
 	}
 
 	pthread_mutex_lock(&monitor->mutex);
+
+	monitor->last_timestamp = audio_data->timestamp;
 	deque_push_back(&monitor->new_data, resample_data[0], bytes);
 
-	if (monitor->new_data.size >= monitor->wait_size) {
-		monitor->wait_size = 0;
+	pthread_mutex_unlock(&monitor->mutex);
+}
 
-		while (monitor->empty_buffers.size > 0) {
-			if (!fill_buffer(monitor)) {
-				break;
+/* const uint64_t one_us = 1000; */
+/* const uint64_t one_ms = one_us * 1000; */
+
+static void *audio_playback_thread(void *param)
+{
+	uint64_t last_timestamp = 0;
+	uint64_t now = 0;
+	struct audio_monitor *monitor = param;
+	for (;;) {
+		if (!os_atomic_load_bool(&monitor->active) || !monitor->active || monitor->paused) {
+			os_sleep_ms(10);
+			continue;
+		}
+
+		pthread_mutex_lock(&monitor->mutex);
+		last_timestamp = monitor->last_timestamp;
+		now = os_gettime_ns();
+		if (now < last_timestamp) {
+			os_sleepto_ns(last_timestamp);
+		}
+
+		if (monitor->new_data.size >= monitor->wait_size) {
+			monitor->wait_size = 0;
+
+			while (monitor->empty_buffers.size > 0) {
+				if (!fill_buffer(monitor)) {
+					break;
+				}
+			}
+
+			if (monitor->paused) {
+				AudioQueueStart(monitor->queue, NULL);
+				monitor->paused = false;
 			}
 		}
-
-		if (monitor->paused) {
-			AudioQueueStart(monitor->queue, NULL);
-			monitor->paused = false;
-		}
+		pthread_mutex_unlock(&monitor->mutex);
+		// TODO(Ben): sleep / use a signal group for filling the buffer.
 	}
-
-	pthread_mutex_unlock(&monitor->mutex);
 }
 
 static void buffer_audio(void *data, AudioQueueRef aq, AudioQueueBufferRef buf)
@@ -237,6 +274,11 @@ static bool audio_monitor_init(struct audio_monitor *monitor, obs_source_t *sour
 
 	stat = AudioQueueStart(monitor->queue, NULL);
 	if (!success(stat, "start")) {
+		return false;
+	}
+
+	if (pthread_create(&monitor->thread, NULL, audio_playback_thread, monitor) < 0) {
+		blog(LOG_WARNING, "%s: %s", __FUNCTION__, "Failed to create playback thread");
 		return false;
 	}
 

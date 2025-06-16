@@ -1428,7 +1428,7 @@ static inline bool source_muted(obs_source_t *source, uint64_t os_time)
 uint64_t base_time_os = 0;
 uint64_t base_pts_time = 0;
 
-static void source_output_audio_data(obs_source_t *source, const struct audio_data *data)
+static void source_output_audio_data(obs_source_t *source, struct audio_data *data)
 {
 	size_t sample_rate = audio_output_get_sample_rate(obs->audio.audio);
 	struct audio_data in = *data;
@@ -1439,7 +1439,7 @@ static void source_output_audio_data(obs_source_t *source, const struct audio_da
 	bool push_back = false;
 
 	/* first packet of any source will setup the /base/ timings. The rest will just be set in accordance */
-	if (base_time_os == 0 || in.timestamp < base_pts_time) {
+	if (base_time_os == 0 || data->timestamp < base_pts_time) {
 		base_time_os = os_gettime_ns();
 		base_pts_time = in.timestamp;
 		source->timing_set = true;
@@ -1447,48 +1447,48 @@ static void source_output_audio_data(obs_source_t *source, const struct audio_da
 	}
 
 	/* now attempt to set the PTS to be in accordance with wallclock time */
-	in.timestamp = (in.timestamp - base_pts_time) + base_time_os;
+	data->timestamp = (data->timestamp - base_pts_time) + base_time_os;
 
 	/* detects 'directly' set timestamps as long as they're within
 	 * a certain threshold */
-	if (uint64_diff(in.timestamp, os_time) < MAX_TS_VAR) {
+	if (uint64_diff(data->timestamp, os_time) < MAX_TS_VAR) {
 		source->timing_adjust = 0;
 		source->timing_set = true;
 		using_direct_ts = true;
 	}
 
 	if (!source->timing_set) {
-		reset_audio_timing(source, in.timestamp, os_time);
+		reset_audio_timing(source, data->timestamp, os_time);
 
 	} else if (source->next_audio_ts_min != 0) {
-		diff = uint64_diff(source->next_audio_ts_min, in.timestamp);
+		diff = uint64_diff(source->next_audio_ts_min, data->timestamp);
 
 		/* smooth audio if within threshold */
 		if (diff > MAX_TS_VAR && !using_direct_ts)
-			handle_ts_jump(source, source->next_audio_ts_min, in.timestamp, diff, os_time);
+			handle_ts_jump(source, source->next_audio_ts_min, data->timestamp, diff, os_time);
 		else if (diff < TS_SMOOTHING_THRESHOLD) {
 			if (source->async_unbuffered && source->async_decoupled)
-				source->timing_adjust = os_time - in.timestamp;
-			in.timestamp = source->next_audio_ts_min;
+				source->timing_adjust = os_time - data->timestamp;
+			data->timestamp = source->next_audio_ts_min;
 		} else {
 			blog(LOG_DEBUG,
 			     "Audio timestamp for '%s' exceeded TS_SMOOTHING_THRESHOLD, diff=%" PRIu64
 			     " ns, expected %" PRIu64 ", input %" PRIu64,
-			     source->context.name, diff, source->next_audio_ts_min, in.timestamp);
+			     source->context.name, diff, source->next_audio_ts_min, data->timestamp);
 		}
 	}
 
-	source->next_audio_ts_min = in.timestamp + conv_frames_to_time(sample_rate, in.frames);
+	source->next_audio_ts_min = data->timestamp + conv_frames_to_time(sample_rate, data->frames);
 
-	in.timestamp += source->timing_adjust;
+	data->timestamp += source->timing_adjust;
 
 	pthread_mutex_lock(&source->audio_buf_mutex);
 
-	if (source->next_audio_sys_ts_min == in.timestamp) {
+	if (source->next_audio_sys_ts_min == data->timestamp) {
 		push_back = true;
 
 	} else if (source->next_audio_sys_ts_min) {
-		diff = uint64_diff(source->next_audio_sys_ts_min, in.timestamp);
+		diff = uint64_diff(source->next_audio_sys_ts_min, data->timestamp);
 
 		if (diff < TS_SMOOTHING_THRESHOLD) {
 			push_back = true;
@@ -1501,13 +1501,13 @@ static void source_output_audio_data(obs_source_t *source, const struct audio_da
 			 * just clear the audio data in that small window and force a
 			 * resync.  This handles all cases rather than just looping. */
 			reset_audio_timing(source, data->timestamp, os_time);
-			in.timestamp = data->timestamp + source->timing_adjust;
+			data->timestamp = in.timestamp + source->timing_adjust;
 		}
 	}
 
 	sync_offset = source->sync_offset;
-	in.timestamp += sync_offset;
-	in.timestamp -= source->resample_offset;
+	data->timestamp += sync_offset;
+	data->timestamp -= source->resample_offset;
 
 	source->next_audio_sys_ts_min = source->next_audio_ts_min + source->timing_adjust;
 
@@ -1519,9 +1519,9 @@ static void source_output_audio_data(obs_source_t *source, const struct audio_da
 
 	if (source->monitoring_type != OBS_MONITORING_TYPE_MONITOR_ONLY) {
 		if (push_back && source->audio_ts)
-			source_output_audio_push_back(source, &in);
+			source_output_audio_push_back(source, data);
 		else
-			source_output_audio_place(source, &in);
+			source_output_audio_place(source, data);
 	}
 
 	pthread_mutex_unlock(&source->audio_buf_mutex);

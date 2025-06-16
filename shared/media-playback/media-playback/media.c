@@ -27,6 +27,35 @@
 
 static int64_t base_sys_ts = 0;
 
+// in here i'm storing the current most recent timestamp encountererd for each
+// indexed source. With this, I can determine how far ahead or how far behind each
+// source is relative to the others.
+// Assuming we have the same source coming in, we can sleep sources who are too fast.
+int64_t active_ts[8] = {
+	0, 0, 0, 0, 0, 0, 0, 0,
+};
+
+int64_t ts_offsets[8] = {
+	0, 0, 0, 0, 0, 0, 0, 0,
+};
+
+// little utility to get the minimum active TS (neglecting those that have not yet started)
+static inline int64_t min_ts(size_t cur_ix)
+{
+	int64_t minimum_encountered = INT64_MAX;
+	for (size_t ix = 0; ix < sizeof(active_ts) / sizeof(int64_t); ix += 1) {
+		int64_t elem = active_ts[ix];
+		if (elem == 0 || cur_ix == ix) {
+			continue;
+		}
+		if (elem < minimum_encountered) {
+			minimum_encountered = elem;
+		}
+	}
+
+	return minimum_encountered;
+}
+
 static inline enum video_format convert_pixel_format(int f)
 {
 	switch (f) {
@@ -367,6 +396,12 @@ void mp_media_next_audio(mp_media_t *m)
 	audio.timestamp = m->full_decode ? d->frame_pts
 					 : m->base_ts + d->frame_pts - m->start_ts + m->play_sys_ts - base_sys_ts;
 
+	size_t media_ix = m->path[19] - '0' - 8;
+	audio.timestamp += ts_offsets[media_ix];
+	/* if (media_ix == 1) { */
+	/* 	audio.timestamp += ((int64_t)1 * 1000 * 1000 * 1000); */
+	/* } */
+
 	if (audio.format == AUDIO_FORMAT_UNKNOWN)
 		return;
 
@@ -448,6 +483,9 @@ void mp_media_next_video(mp_media_t *m, bool preload)
 	frame->timestamp = m->full_decode ? d->frame_pts
 					  : (m->base_ts + d->frame_pts - m->start_ts + m->play_sys_ts - base_sys_ts);
 
+	size_t media_ix = m->path[19] - '0' - 8;
+	frame->timestamp += ts_offsets[media_ix];
+
 	frame->width = f->width;
 	frame->height = f->height;
 	frame->max_luminance = d->max_luminance;
@@ -499,9 +537,9 @@ static void mp_media_calc_next_ns(mp_media_t *m)
 		delta = 0;
 		m->seek_next_ts = false;
 	} else {
-#ifdef _DEBUG
-		assert(delta >= 0);
-#endif
+		/* #ifdef _DEBUG */
+		/* 		assert(delta >= 0); */
+		/* #endif */
 		if (delta < 0)
 			delta = 0;
 		if (delta > 3000000000)
@@ -732,6 +770,8 @@ bool mp_media_init2(mp_media_t *m)
 	return true;
 }
 
+/* static bool test_flag = false; */
+
 static inline bool mp_media_thread(mp_media_t *m)
 {
 	os_set_thread_name("mp_media_thread");
@@ -742,6 +782,11 @@ static inline bool mp_media_thread(mp_media_t *m)
 	if (!mp_media_reset(m)) {
 		return false;
 	}
+
+	// '8' | '9' -> ix
+	size_t media_ix = m->path[19] - '0' - 8;
+
+	int64_t last_set_time = 0;
 
 	for (;;) {
 		bool reset, kill, is_active, seek, pause, reset_time, preload_frame;
@@ -760,6 +805,28 @@ static inline bool mp_media_thread(mp_media_t *m)
 				reset_ts(m);
 		} else {
 			timeout = mp_media_sleep(m);
+		}
+
+		/* Now, is this media particularly far ahead of the minimum? */
+		int64_t ts_min = min_ts(media_ix);
+		int64_t ts_cur = active_ts[media_ix] - ts_offsets[media_ix];
+		int64_t ts_delta = ts_cur - ts_min;
+		const int64_t five_minutes = 5 * 60 * 1000 * (int64_t)(1000 * 1000);
+
+		// every five minutes, try to readjust the source's sync
+		if (os_gettime_ns() - last_set_time > five_minutes) {
+			//printf("--> Set interval\n");
+			if (ts_delta > (int64_t)50 * 1000 * 1000) {
+				int64_t delta_ms = ts_delta / 1000000;
+				printf("--> %s ahead by %lld ts units. Sleeping for %lldms; ", m->path, ts_delta,
+				       delta_ms);
+				printf("%lu : %lld %lld %lld\n", media_ix, active_ts[0], active_ts[1], m->a.frame_pts);
+
+				ts_offsets[media_ix] += ts_delta;
+				last_set_time = os_gettime_ns();
+
+				continue;
+			}
 		}
 
 		pthread_mutex_lock(&m->mutex);
@@ -822,6 +889,7 @@ static inline bool mp_media_thread(mp_media_t *m)
 
 			mp_media_calc_next_ns(m);
 		}
+		active_ts[media_ix] = mp_media_get_next_min_pts(m);
 	}
 
 	return true;
