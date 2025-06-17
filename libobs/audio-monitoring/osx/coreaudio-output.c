@@ -32,6 +32,8 @@ struct audio_monitor {
 	size_t wait_size;
 	uint32_t channels;
 
+	volatile bool shutdown;
+
 	volatile bool active;
 	bool paused;
 	bool ignore;
@@ -77,7 +79,7 @@ static void on_audio_playback(void *param, obs_source_t *source, const struct au
 	float vol = source->user_volume;
 	uint32_t bytes;
 
-	if (!os_atomic_load_bool(&monitor->active)) {
+	if (!os_atomic_load_bool(&monitor->active) || os_atomic_load_bool(&monitor->shutdown)) {
 		return;
 	}
 
@@ -119,25 +121,33 @@ static void on_audio_playback(void *param, obs_source_t *source, const struct au
 	pthread_mutex_unlock(&monitor->mutex);
 }
 
-/* const uint64_t one_us = 1000; */
-/* const uint64_t one_ms = one_us * 1000; */
-
 static void *audio_playback_thread(void *param)
 {
 	uint64_t last_timestamp = 0;
 	uint64_t now = 0;
 	struct audio_monitor *monitor = param;
 	for (;;) {
-		if (!os_atomic_load_bool(&monitor->active) || !monitor->active || monitor->paused) {
+		if (os_atomic_load_bool(&monitor->shutdown)) {
+			break;
+		}
+
+		pthread_mutex_lock(&monitor->mutex);
+		if (!os_atomic_load_bool(&monitor->active) || monitor->ignore) {
+			pthread_mutex_unlock(&monitor->mutex);
 			os_sleep_ms(10);
 			continue;
 		}
 
-		pthread_mutex_lock(&monitor->mutex);
 		last_timestamp = monitor->last_timestamp;
 		now = os_gettime_ns();
 		if (now < last_timestamp) {
+			pthread_mutex_unlock(&monitor->mutex);
 			os_sleepto_ns(last_timestamp);
+
+			if (os_atomic_load_bool(&monitor->shutdown)) {
+				break;
+			}
+			pthread_mutex_lock(&monitor->mutex);
 		}
 
 		if (monitor->new_data.size >= monitor->wait_size) {
@@ -157,6 +167,8 @@ static void *audio_playback_thread(void *param)
 		pthread_mutex_unlock(&monitor->mutex);
 		// TODO(Ben): sleep / use a signal group for filling the buffer.
 	}
+
+	return NULL;
 }
 
 static void buffer_audio(void *data, AudioQueueRef aq, AudioQueueBufferRef buf)
@@ -288,6 +300,11 @@ static bool audio_monitor_init(struct audio_monitor *monitor, obs_source_t *sour
 
 static void audio_monitor_free(struct audio_monitor *monitor)
 {
+	monitor->shutdown = true;
+
+	// now, wait for the mutex to come unlocked.
+	pthread_mutex_lock(&monitor->mutex);
+
 	if (monitor->source) {
 		obs_source_remove_audio_capture_callback(monitor->source, on_audio_playback, monitor);
 		obs_source_remove_audio_pause_callback(monitor->source, on_audio_pause, monitor);
@@ -307,6 +324,8 @@ static void audio_monitor_free(struct audio_monitor *monitor)
 	audio_resampler_destroy(monitor->resampler);
 	deque_free(&monitor->empty_buffers);
 	deque_free(&monitor->new_data);
+	pthread_mutex_unlock(&monitor->mutex);
+
 	pthread_mutex_destroy(&monitor->mutex);
 }
 
