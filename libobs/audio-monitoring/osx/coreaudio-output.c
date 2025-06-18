@@ -214,6 +214,7 @@ static bool audio_monitor_init(struct audio_monitor *monitor, obs_source_t *sour
 	monitor->channels = channels;
 	monitor->buffer_size = channels * sizeof(float) * info->samples_per_sec / 100 * 3;
 	monitor->wait_size = monitor->buffer_size * 3;
+	monitor->shutdown = false;
 
 	pthread_mutex_init_value(&monitor->mutex);
 

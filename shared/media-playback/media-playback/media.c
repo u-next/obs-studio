@@ -396,7 +396,7 @@ void mp_media_next_audio(mp_media_t *m)
 	audio.timestamp = m->full_decode ? d->frame_pts
 					 : m->base_ts + d->frame_pts - m->start_ts + m->play_sys_ts - base_sys_ts;
 
-	size_t media_ix = m->path[19] - '0' - 8;
+	size_t media_ix = m->path[19] - '0' - 7;
 	audio.timestamp += ts_offsets[media_ix];
 	/* if (media_ix == 1) { */
 	/* 	audio.timestamp += ((int64_t)1 * 1000 * 1000 * 1000); */
@@ -483,7 +483,7 @@ void mp_media_next_video(mp_media_t *m, bool preload)
 	frame->timestamp = m->full_decode ? d->frame_pts
 					  : (m->base_ts + d->frame_pts - m->start_ts + m->play_sys_ts - base_sys_ts);
 
-	size_t media_ix = m->path[19] - '0' - 8;
+	size_t media_ix = m->path[19] - '0' - 7;
 	frame->timestamp += ts_offsets[media_ix];
 
 	frame->width = f->width;
@@ -586,6 +586,8 @@ bool mp_media_reset(mp_media_t *m)
 	bool stopping;
 	bool active;
 
+	size_t media_ix = m->path[19] - '0' - 7;
+
 	int64_t next_ts = mp_media_get_base_pts(m);
 	int64_t offset = next_ts - m->next_pts_ns;
 	int64_t start_time = m->fmt->start_time;
@@ -595,6 +597,15 @@ bool mp_media_reset(mp_media_t *m)
 	m->eof = false;
 	m->base_ts += next_ts;
 	m->seek_next_ts = false;
+
+	/*
+          Reset the media offsets.
+          Without this in place, as sources would restart or go down,
+          the offsets would end up wrong as the new source would likely
+          suddenly be very far ahead or very far behind.
+         */
+	active_ts[media_ix] = 0;
+	ts_offsets[media_ix] = 0;
 
 	seek_to(m, start_time);
 
@@ -783,8 +794,9 @@ static inline bool mp_media_thread(mp_media_t *m)
 		return false;
 	}
 
-	// '8' | '9' -> ix
-	size_t media_ix = m->path[19] - '0' - 8;
+	/* TODO(Ben): needs to be a hash table */
+	/* '7' | '8' | '9' -> ix */
+	size_t media_ix = m->path[19] - '0' - 7;
 
 	int64_t last_set_time = 0;
 
@@ -813,9 +825,8 @@ static inline bool mp_media_thread(mp_media_t *m)
 		int64_t ts_delta = ts_cur - ts_min;
 		const int64_t five_minutes = 5 * 60 * 1000 * (int64_t)(1000 * 1000);
 
-		// every five minutes, try to readjust the source's sync
+		/* every five minutes, try to readjust the source's sync */
 		if (os_gettime_ns() - last_set_time > five_minutes) {
-			//printf("--> Set interval\n");
 			if (ts_delta > (int64_t)50 * 1000 * 1000) {
 				int64_t delta_ms = ts_delta / 1000000;
 				printf("--> %s ahead by %lld ts units. Sleeping for %lldms; ", m->path, ts_delta,
