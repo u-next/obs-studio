@@ -29,6 +29,9 @@ struct channel_copier {
 	/* store the sample rate of obs output */
 	uint32_t sample_rate;
 
+	/* Do we want to replace the current values or add to them? (mixing) */
+	bool mix_mode;
+
 	pthread_mutex_t mutex;
 };
 
@@ -79,6 +82,35 @@ static void capture(void *param, obs_source_t *source, const struct audio_data *
 	pthread_mutex_unlock(&ccopier->mutex);
 }
 
+/* as opposed to overwriting, this will pop from the queue and mix the
+   samples with whatever is already in the audio channel. */
+static void mix_samples_peek(struct deque *dq, uint8_t *dest, size_t size)
+{
+	assert(size <= dq->size);
+	assert(dest);
+
+	size_t start_size = dq->capacity - dq->start_pos;
+	if (start_size < size) {
+		uint8_t *read_head = dq->data + dq->start_pos;
+		size_t ix = 0;
+		for (; ix < start_size; ix += 1) {
+			dest[ix] += read_head[ix];
+		}
+
+		/* loop around for the read */
+		read_head = dq->data;
+		for (; ix < size - start_size; ix += 1) {
+			dest[ix] += read_head[ix];
+		}
+	} else {
+		//memcpy(data, (uint8_t *)dq->data + dq->start_pos, size);
+		uint8_t *read_head = dq->data + dq->start_pos;
+		for (size_t ix = 0; ix < size; ix += 1) {
+			dest[ix] += read_head[ix];
+		}
+	}
+}
+
 // This filter completely discards whatever the input data was and instead overwrites it
 // with the contents of the callback result.
 static struct obs_audio_data *ccopier_filter_audio(void *data, struct obs_audio_data *audio)
@@ -113,16 +145,18 @@ static struct obs_audio_data *ccopier_filter_audio(void *data, struct obs_audio_
 
 		/* In the event that there is overlap in channels (ex: duplicating)
                    we want to be careful to make sure each source is getting the same data. */
-		deque_peek_front(&ccopier->source_data[ix], audio->data[mapping], audio->frames * sizeof(float));
+		if (ccopier->mix_mode) {
+			mix_samples_peek(&ccopier->source_data[ix], audio->data[mapping],
+					 audio->frames * sizeof(float));
+		} else {
+			deque_peek_front(&ccopier->source_data[ix], audio->data[mapping],
+					 audio->frames * sizeof(float));
+		}
 	}
 
-	/* NOW, we drop the data we pulled out. We dump all channels so that non-active ones dont get filled */
+	/* NOW, we drop the data we pulled out.
+           We dump all channels so that non-active deques dont get filled */
 	for (size_t ix = 0; ix < MAX_AUDIO_CHANNELS; ix += 1) {
-		/* ssize_t mapping = ccopier->dest_channels[ix]; */
-		/* if (mapping == INVALID_MAPPING) { */
-		/* 	continue; */
-		/* } */
-
 		deque_pop_front(&ccopier->source_data[ix], NULL, audio->frames * sizeof(float));
 	}
 
@@ -199,6 +233,8 @@ static void *ccopier_filter_create(obs_data_t *settings, obs_source_t *ctx)
 	ccopier->sample_rate = audio_output_get_sample_rate(obs_get_audio());
 	ccopier->source_name = NULL;
 
+	ccopier->mix_mode = false;
+
 	for (size_t ix = 0; ix < MAX_AUDIO_CHANNELS; ix += 1) {
 		ccopier->dest_channels[ix] = INVALID_MAPPING;
 	}
@@ -255,7 +291,7 @@ static void ccopier_filter_defaults(obs_data_t *s)
 		snprintf(property_name, 16, "ccopier_chan_%d", ix);
 		snprintf(printed_name, 16, "Track %d", ix);
 
-		obs_data_set_default_int(s, property_name, -1);
+		obs_data_set_default_int(s, property_name, ix);
 	}
 
 	return;
