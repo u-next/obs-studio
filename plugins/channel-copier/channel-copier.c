@@ -84,14 +84,14 @@ static void capture(void *param, obs_source_t *source, const struct audio_data *
 
 /* as opposed to overwriting, this will pop from the queue and mix the
    samples with whatever is already in the audio channel. */
-static void mix_samples_peek(struct deque *dq, uint8_t *dest, size_t size)
+static void mix_samples_peek(struct deque *dq, float *dest, size_t size)
 {
 	assert(size <= dq->size);
 	assert(dest);
 
-	size_t start_size = dq->capacity - dq->start_pos;
+	size_t start_size = (dq->capacity - dq->start_pos) / sizeof(float);
 	if (start_size < size) {
-		uint8_t *read_head = dq->data + dq->start_pos;
+		float *read_head = dq->data + dq->start_pos;
 		size_t ix = 0;
 		for (; ix < start_size; ix += 1) {
 			dest[ix] += read_head[ix];
@@ -104,7 +104,7 @@ static void mix_samples_peek(struct deque *dq, uint8_t *dest, size_t size)
 		}
 	} else {
 		//memcpy(data, (uint8_t *)dq->data + dq->start_pos, size);
-		uint8_t *read_head = dq->data + dq->start_pos;
+		float *read_head = dq->data + dq->start_pos;
 		for (size_t ix = 0; ix < size; ix += 1) {
 			dest[ix] += read_head[ix];
 		}
@@ -146,8 +146,7 @@ static struct obs_audio_data *ccopier_filter_audio(void *data, struct obs_audio_
 		/* In the event that there is overlap in channels (ex: duplicating)
                    we want to be careful to make sure each source is getting the same data. */
 		if (ccopier->mix_mode) {
-			mix_samples_peek(&ccopier->source_data[ix], audio->data[mapping],
-					 audio->frames * sizeof(float));
+			mix_samples_peek(&ccopier->source_data[ix], (float *)audio->data[mapping], audio->frames);
 		} else {
 			deque_peek_front(&ccopier->source_data[ix], audio->data[mapping],
 					 audio->frames * sizeof(float));
@@ -187,12 +186,16 @@ static void ccopier_filter_update(void *data, obs_data_t *settings)
 	}
 
 	/* get the matched channel */
+	pthread_mutex_lock(&ccopier->mutex);
 	for (int ix = 0; ix < MAX_AUDIO_CHANNELS; ix += 1) {
 		char property_name[16];
 		snprintf(property_name, 16, "ccopier_chan_%d", ix);
 		ssize_t mapping = obs_data_get_int(settings, property_name);
 		ccopier->dest_channels[ix] = mapping;
 	}
+
+	ccopier->mix_mode = obs_data_get_bool(settings, "mix_mode");
+	pthread_mutex_unlock(&ccopier->mutex);
 
 	ccopier->source_name = bstrdup(source_name);
 
@@ -294,6 +297,8 @@ static void ccopier_filter_defaults(obs_data_t *s)
 		obs_data_set_default_int(s, property_name, ix);
 	}
 
+	obs_data_set_default_bool(s, "mix_mode", false);
+
 	return;
 }
 
@@ -324,6 +329,8 @@ static obs_properties_t *ccopier_filter_properites(void *data)
 	obs_property_t *sources = obs_properties_add_list(props, "ccopier_source", "Copy Source", OBS_COMBO_TYPE_LIST,
 							  OBS_COMBO_FORMAT_STRING);
 	obs_property_list_add_string(sources, obs_module_text("None"), "none");
+
+	obs_properties_add_bool(props, "mix_mode", "Mix input(s)");
 
 	struct ccopier_cb_info info = {sources, NULL};
 	obs_enum_sources(add_sources, &info);
