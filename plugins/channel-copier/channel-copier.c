@@ -100,18 +100,30 @@ static struct obs_audio_data *ccopier_filter_audio(void *data, struct obs_audio_
 	// copy over the source data to the target in order.
 	// this will overwrite whatever is in the input buffer.
 	for (size_t ix = 0; ix < MAX_AUDIO_CHANNELS; ix += 1) {
+		/* if there's not enough data in the deque, populate the queue. */
+		if (populate_zero_count > 0) {
+			deque_push_back_zero(&ccopier->source_data[ix], populate_zero_count);
+		}
+
+		/* We only want to write to mapped channels. */
 		ssize_t mapping = ccopier->dest_channels[ix];
 		if (mapping == INVALID_MAPPING) {
 			continue;
 		}
 
-		// if there's not enough data in the deque, populate the queue.
-		if (populate_zero_count > 0) {
-			deque_push_back_zero(&ccopier->source_data[ix], populate_zero_count);
-		}
+		/* In the event that there is overlap in channels (ex: duplicating)
+                   we want to be careful to make sure each source is getting the same data. */
+		deque_peek_front(&ccopier->source_data[ix], audio->data[mapping], audio->frames * sizeof(float));
+	}
 
-		// otherwise, grab all of the data in the deque.
-		deque_pop_front(&ccopier->source_data[ix], audio->data[mapping], audio->frames * sizeof(float));
+	/* NOW, we drop the data we pulled out. We dump all channels so that non-active ones dont get filled */
+	for (size_t ix = 0; ix < MAX_AUDIO_CHANNELS; ix += 1) {
+		/* ssize_t mapping = ccopier->dest_channels[ix]; */
+		/* if (mapping == INVALID_MAPPING) { */
+		/* 	continue; */
+		/* } */
+
+		deque_pop_front(&ccopier->source_data[ix], NULL, audio->frames * sizeof(float));
 	}
 
 	pthread_mutex_unlock(&ccopier->mutex);
