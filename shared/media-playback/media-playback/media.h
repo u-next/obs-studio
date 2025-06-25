@@ -103,6 +103,10 @@ struct mp_media {
 	bool seek;
 	bool seek_next_ts;
 	int64_t seek_pos;
+
+	/* PTS offset necessary to resync between sources. */
+	int64_t active_ts;
+	int64_t ts_offset;
 };
 
 typedef struct mp_media mp_media_t;

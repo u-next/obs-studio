@@ -14,6 +14,8 @@
  * OR IN CONNECTION WITH THE USE OR PERFORMANCE OF THIS SOFTWARE.
  */
 
+#include <pthread.h>
+#include <stdint.h>
 #include <util/platform.h>
 
 #include <assert.h>
@@ -25,35 +27,40 @@
 #include <libavdevice/avdevice.h>
 #include <libavutil/imgutils.h>
 
+/* Global synchro between multiple sources in a single OBS. */
+struct mp_global_sync_info {
+	int64_t minimum_active_ts;
+	mp_media_t *minimum_media;
+} sync_info = {
+	.minimum_active_ts = INT64_MAX,
+	.minimum_media = NULL,
+};
+
+static pthread_mutex_t global_sync_mx = PTHREAD_MUTEX_INITIALIZER;
 static int64_t base_sys_ts = 0;
 
-// in here i'm storing the current most recent timestamp encountererd for each
-// indexed source. With this, I can determine how far ahead or how far behind each
-// source is relative to the others.
-// Assuming we have the same source coming in, we can sleep sources who are too fast.
-int64_t active_ts[8] = {
-	0, 0, 0, 0, 0, 0, 0, 0,
-};
-
-int64_t ts_offsets[8] = {
-	0, 0, 0, 0, 0, 0, 0, 0,
-};
-
-// little utility to get the minimum active TS (neglecting those that have not yet started)
-static inline int64_t min_ts(size_t cur_ix)
+/* pre-supposing that the current state is correct, the two possible cases are
+   either that the current TS is a result of the same source that generated the
+   minimum TS and thus the new minimum is whatever the current timestamp is OR
+   that the new minimum TS is a different source in which case it represents a new
+   minimum to compare against. */
+static inline int64_t min_ts(mp_media_t *m)
 {
-	int64_t minimum_encountered = INT64_MAX;
-	for (size_t ix = 0; ix < sizeof(active_ts) / sizeof(int64_t); ix += 1) {
-		int64_t elem = active_ts[ix];
-		if (elem == 0 || cur_ix == ix) {
-			continue;
-		}
-		if (elem < minimum_encountered) {
-			minimum_encountered = elem;
-		}
+	int64_t val = m->active_ts;
+	pthread_mutex_lock(&global_sync_mx);
+
+	if (m != sync_info.minimum_media && sync_info.minimum_active_ts > m->active_ts) {
+		sync_info.minimum_active_ts = m->active_ts;
+		sync_info.minimum_media = m;
+	} else if (m == sync_info.minimum_media) {
+		sync_info.minimum_active_ts = m->active_ts;
 	}
 
-	return minimum_encountered;
+	val = sync_info.minimum_active_ts;
+
+	pthread_mutex_unlock(&global_sync_mx);
+
+	return val;
 }
 
 static inline enum video_format convert_pixel_format(int f)
@@ -396,8 +403,9 @@ void mp_media_next_audio(mp_media_t *m)
 	audio.timestamp = m->full_decode ? d->frame_pts
 					 : m->base_ts + d->frame_pts - m->start_ts + m->play_sys_ts - base_sys_ts;
 
-	size_t media_ix = m->path[19] - '0' - 7;
-	audio.timestamp += ts_offsets[media_ix];
+	/* size_t media_ix = m->path[19] - '0' - 7; */
+	/* audio.timestamp += ts_offsets[media_ix]; */
+	audio.timestamp += m->ts_offset;
 	/* if (media_ix == 1) { */
 	/* 	audio.timestamp += ((int64_t)1 * 1000 * 1000 * 1000); */
 	/* } */
@@ -483,8 +491,9 @@ void mp_media_next_video(mp_media_t *m, bool preload)
 	frame->timestamp = m->full_decode ? d->frame_pts
 					  : (m->base_ts + d->frame_pts - m->start_ts + m->play_sys_ts - base_sys_ts);
 
-	size_t media_ix = m->path[19] - '0' - 7;
-	frame->timestamp += ts_offsets[media_ix];
+	/* size_t media_ix = m->path[19] - '0' - 7; */
+	/* frame->timestamp += ts_offsets[media_ix]; */
+	frame->timestamp += m->ts_offset;
 
 	frame->width = f->width;
 	frame->height = f->height;
@@ -586,7 +595,7 @@ bool mp_media_reset(mp_media_t *m)
 	bool stopping;
 	bool active;
 
-	size_t media_ix = m->path[19] - '0' - 7;
+	/* size_t media_ix = m->path[19] - '0' - 7; */
 
 	int64_t next_ts = mp_media_get_base_pts(m);
 	int64_t offset = next_ts - m->next_pts_ns;
@@ -604,8 +613,10 @@ bool mp_media_reset(mp_media_t *m)
           the offsets would end up wrong as the new source would likely
           suddenly be very far ahead or very far behind.
          */
-	active_ts[media_ix] = 0;
-	ts_offsets[media_ix] = 0;
+	/* active_ts[media_ix] = 0; */
+	/* ts_offsets[media_ix] = 0; */
+	m->active_ts = 0;
+	m->ts_offset = 0;
 
 	seek_to(m, start_time);
 
@@ -794,10 +805,6 @@ static inline bool mp_media_thread(mp_media_t *m)
 		return false;
 	}
 
-	/* TODO(Ben): needs to be a hash table */
-	/* '7' | '8' | '9' -> ix */
-	size_t media_ix = m->path[19] - '0' - 7;
-
 	int64_t last_set_time = 0;
 
 	for (;;) {
@@ -820,20 +827,22 @@ static inline bool mp_media_thread(mp_media_t *m)
 		}
 
 		/* Now, is this media particularly far ahead of the minimum? */
-		int64_t ts_min = min_ts(media_ix);
-		int64_t ts_cur = active_ts[media_ix] - ts_offsets[media_ix];
+		int64_t ts_min = min_ts(m);
+		/* int64_t ts_cur = active_ts[media_ix] - ts_offsets[media_ix]; */
+		int64_t ts_cur = m->active_ts - m->ts_offset;
 		int64_t ts_delta = ts_cur - ts_min;
 		const int64_t five_minutes = 5 * 60 * 1000 * (int64_t)(1000 * 1000);
 
 		/* every five minutes, try to readjust the source's sync */
-		if (os_gettime_ns() - last_set_time > five_minutes) {
+		if (ts_min != 0 && os_gettime_ns() - last_set_time > five_minutes) {
 			if (ts_delta > (int64_t)50 * 1000 * 1000) {
 				int64_t delta_ms = ts_delta / 1000000;
 				printf("--> %s ahead by %lld ts units. Sleeping for %lldms; ", m->path, ts_delta,
 				       delta_ms);
-				printf("%lu : %lld %lld %lld\n", media_ix, active_ts[0], active_ts[1], m->a.frame_pts);
+				/* printf("%lu : %lld %lld %lld\n", media_ix, active_ts[0], active_ts[1], m->a.frame_pts); */
 
-				ts_offsets[media_ix] += ts_delta;
+				/* ts_offsets[media_ix] += ts_delta; */
+				m->ts_offset += ts_delta;
 				last_set_time = os_gettime_ns();
 
 				continue;
@@ -900,7 +909,8 @@ static inline bool mp_media_thread(mp_media_t *m)
 
 			mp_media_calc_next_ns(m);
 		}
-		active_ts[media_ix] = mp_media_get_next_min_pts(m);
+		/* active_ts[media_ix] = mp_media_get_next_min_pts(m); */
+		m->active_ts = mp_media_get_next_min_pts(m);
 	}
 
 	return true;
@@ -1005,6 +1015,14 @@ void mp_media_free(mp_media_t *media)
 
 	mp_media_stop(media);
 	mp_kill_thread(media);
+
+	pthread_mutex_lock(&global_sync_mx);
+	if (sync_info.minimum_media == media) {
+		sync_info.minimum_media = NULL;
+		sync_info.minimum_active_ts = INT64_MAX;
+	}
+	pthread_mutex_unlock(&global_sync_mx);
+
 	mp_decode_free(&media->v);
 	mp_decode_free(&media->a);
 	for (size_t i = 0; i < media->packet_pool.num; i++)
