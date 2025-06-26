@@ -613,8 +613,6 @@ bool mp_media_reset(mp_media_t *m)
           the offsets would end up wrong as the new source would likely
           suddenly be very far ahead or very far behind.
          */
-	/* active_ts[media_ix] = 0; */
-	/* ts_offsets[media_ix] = 0; */
 	m->active_ts = 0;
 	m->ts_offset = 0;
 
@@ -828,20 +826,17 @@ static inline bool mp_media_thread(mp_media_t *m)
 
 		/* Now, is this media particularly far ahead of the minimum? */
 		int64_t ts_min = min_ts(m);
-		/* int64_t ts_cur = active_ts[media_ix] - ts_offsets[media_ix]; */
 		int64_t ts_cur = m->active_ts - m->ts_offset;
 		int64_t ts_delta = ts_cur - ts_min;
-		const int64_t five_minutes = 5 * 60 * 1000 * (int64_t)(1000 * 1000);
+		const uint64_t five_minutes = 5 * 60 * 1000 * (int64_t)(1000 * 1000);
 
 		/* every five minutes, try to readjust the source's sync */
-		if (ts_min != 0 && os_gettime_ns() - last_set_time > five_minutes) {
+		if (!m->is_local_file && ts_min != 0 && os_gettime_ns() - last_set_time > five_minutes) {
 			if (ts_delta > (int64_t)50 * 1000 * 1000) {
 				int64_t delta_ms = ts_delta / 1000000;
-				printf("--> %s ahead by %lld ts units. Sleeping for %lldms; ", m->path, ts_delta,
-				       delta_ms);
-				/* printf("%lu : %lld %lld %lld\n", media_ix, active_ts[0], active_ts[1], m->a.frame_pts); */
+				printf("--> %s ahead by %" PRId64 " ts units. Sleeping for %" PRId64 "ms; ", m->path,
+				       ts_delta, delta_ms);
 
-				/* ts_offsets[media_ix] += ts_delta; */
 				m->ts_offset += ts_delta;
 				last_set_time = os_gettime_ns();
 
@@ -909,7 +904,6 @@ static inline bool mp_media_thread(mp_media_t *m)
 
 			mp_media_calc_next_ns(m);
 		}
-		/* active_ts[media_ix] = mp_media_get_next_min_pts(m); */
 		m->active_ts = mp_media_get_next_min_pts(m);
 	}
 

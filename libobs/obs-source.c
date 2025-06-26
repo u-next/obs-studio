@@ -1430,7 +1430,7 @@ uint64_t base_pts_time = 0;
 
 static void source_output_audio_data(obs_source_t *source, struct audio_data *data)
 {
-	/* size_t sample_rate = audio_output_get_sample_rate(obs->audio.audio); */
+	size_t sample_rate = audio_output_get_sample_rate(obs->audio.audio);
 	struct audio_data in = *data;
 	uint64_t diff;
 	uint64_t os_time = os_gettime_ns();
@@ -1461,26 +1461,26 @@ static void source_output_audio_data(obs_source_t *source, struct audio_data *da
 		reset_audio_timing(source, data->timestamp, os_time);
 
 	} else if (source->next_audio_ts_min != 0) {
-		/* diff = uint64_diff(source->next_audio_ts_min, data->timestamp); */
+		diff = uint64_diff(source->next_audio_ts_min, data->timestamp);
 
-		/* /\* smooth audio if within threshold *\/ */
-		/* if (diff > MAX_TS_VAR && !using_direct_ts) */
-		/* 	handle_ts_jump(source, source->next_audio_ts_min, data->timestamp, diff, os_time); */
-		/* else if (diff < TS_SMOOTHING_THRESHOLD) { */
-		/* 	if (source->async_unbuffered && source->async_decoupled) */
-		/* 		source->timing_adjust = os_time - data->timestamp; */
-		/* 	data->timestamp = source->next_audio_ts_min; */
-		/* } else { */
-		/* 	blog(LOG_DEBUG, */
-		/* 	     "Audio timestamp for '%s' exceeded TS_SMOOTHING_THRESHOLD, diff=%" PRIu64 */
-		/* 	     " ns, expected %" PRIu64 ", input %" PRIu64, */
-		/* 	     source->context.name, diff, source->next_audio_ts_min, data->timestamp); */
-		/* } */
+		/* smooth audio if within threshold */
+		if (diff > MAX_TS_VAR && !using_direct_ts)
+			handle_ts_jump(source, source->next_audio_ts_min, data->timestamp, diff, os_time);
+		else if (diff < TS_SMOOTHING_THRESHOLD) {
+			if (source->async_unbuffered && source->async_decoupled)
+				source->timing_adjust = os_time - data->timestamp;
+			data->timestamp = source->next_audio_ts_min;
+		} else {
+			blog(LOG_DEBUG,
+			     "Audio timestamp for '%s' exceeded TS_SMOOTHING_THRESHOLD, diff=%" PRIu64
+			     " ns, expected %" PRIu64 ", input %" PRIu64,
+			     source->context.name, diff, source->next_audio_ts_min, data->timestamp);
+		}
 	}
 
-	/* source->next_audio_ts_min = data->timestamp + conv_frames_to_time(sample_rate, data->frames); */
+	source->next_audio_ts_min = data->timestamp + conv_frames_to_time(sample_rate, data->frames);
 
-	/* data->timestamp += source->timing_adjust; */
+	data->timestamp += source->timing_adjust;
 
 	pthread_mutex_lock(&source->audio_buf_mutex);
 
@@ -1500,8 +1500,8 @@ static void source_output_audio_data(obs_source_t *source, struct audio_data *da
 			 * will have a timestamp jump.  If that case is encountered,
 			 * just clear the audio data in that small window and force a
 			 * resync.  This handles all cases rather than just looping. */
-			/* reset_audio_timing(source, data->timestamp, os_time); */
-			/* data->timestamp = in.timestamp + source->timing_adjust; */
+			reset_audio_timing(source, data->timestamp, os_time);
+			data->timestamp = in.timestamp + source->timing_adjust;
 		}
 	}
 
