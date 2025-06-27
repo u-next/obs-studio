@@ -100,9 +100,12 @@ static void capture(void *param, obs_source_t *source, const struct audio_data *
            that copies from other sources to allow MIDI interfaces etc. to control individual
            channels of a source. If you want to mute, mute this. */
 	for (size_t ix = 0; ix < MAX_AUDIO_CHANNELS; ix += 1) {
-		deque_push_back(&ccopier->source_data[ix], audio_data->data[ix], audio_data->frames * sizeof(float));
-		/* Finally, we want to apply user volume changes from the input to the output. */
-		apply_volume(&ccopier->source_data[ix], obs_source_get_volume(source), audio_data->frames);
+		if (audio_data->data[ix] != NULL) {
+			deque_push_back(&ccopier->source_data[ix], audio_data->data[ix],
+					audio_data->frames * sizeof(float));
+			/* Finally, we want to apply user volume changes from the input to the output. */
+			apply_volume(&ccopier->source_data[ix], obs_source_get_volume(source), audio_data->frames);
+		}
 	}
 
 	pthread_mutex_unlock(&ccopier->mutex);
@@ -142,19 +145,21 @@ static struct obs_audio_data *ccopier_filter_audio(void *data, struct obs_audio_
 	struct channel_copier *ccopier = data;
 
 	pthread_mutex_lock(&ccopier->mutex);
-	size_t populate_zero_count = 0;
-
-	if (audio->frames * sizeof(float) > ccopier->source_data[0].size) {
-		populate_zero_count = audio->frames * sizeof(float) - ccopier->source_data[0].size;
-		blog(LOG_WARNING,
-		     "channel-copier: underflow, "
-		     "%lu samples filled with zero",
-		     populate_zero_count / sizeof(float));
-	}
 
 	// copy over the source data to the target in order.
 	// this will overwrite whatever is in the input buffer.
 	for (size_t ix = 0; ix < MAX_AUDIO_CHANNELS; ix += 1) {
+		size_t populate_zero_count = 0;
+		if (audio->frames * sizeof(float) > ccopier->source_data[ix].size) {
+			populate_zero_count = audio->frames * sizeof(float) - ccopier->source_data[ix].size;
+			/* If we actually want to be pulling from this channel, its worth noting it is empty. */
+			if (ccopier->dest_channels[ix] != -1) {
+				blog(LOG_WARNING,
+				     "channel-copier: underflow on channel %zu, "
+				     "%lu samples filled with zero",
+				     ix, populate_zero_count / sizeof(float));
+			}
+		}
 		if (populate_zero_count > 0) {
 			deque_push_back_zero(&ccopier->source_data[ix], populate_zero_count);
 		}
