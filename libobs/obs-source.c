@@ -3953,6 +3953,7 @@ void remove_async_frame(obs_source_t *source, struct obs_source_frame *frame)
 }
 
 /* #define DEBUG_ASYNC_FRAMES 1 */
+static uint64_t base_video_time_ts = 0;
 
 static bool ready_async_frame(obs_source_t *source, uint64_t sys_time)
 {
@@ -3962,13 +3963,30 @@ static bool ready_async_frame(obs_source_t *source, uint64_t sys_time)
 	uint64_t frame_time = next_frame->timestamp;
 	uint64_t frame_offset = 0;
 
+	/* shared base for unbuffered video. */
+	if (source->async_unbuffered && base_video_time_ts == 0) {
+		base_video_time_ts = sys_time;
+	}
+
+	/* if a frame is within 50ms of our target range, we want to play it. */
+	/* const uint64_t threshold = 50 * (uint64_t)(1000 * 1000); */
+
 	if (source->async_unbuffered) {
-		while (source->async_frames.num > 1) {
+		uint64_t adj_frame_time = base_video_time_ts + next_frame->timestamp;
+		int dropped = 0;
+		while (source->async_frames.num > 2 /*&& sys_time - adj_frame_time > threshold*/) {
 			da_erase(source->async_frames, 0);
 			remove_async_frame(source, next_frame);
 			next_frame = source->async_frames.array[0];
+
+			/* calculate new frame's adjusted frame time */
+			adj_frame_time = base_video_time_ts + next_frame->timestamp;
+			dropped += 1;
 		}
 
+		if (dropped > 1) {
+			printf("Dropped %d frames\n", dropped);
+		}
 		source->last_frame_ts = next_frame->timestamp;
 		return true;
 	}

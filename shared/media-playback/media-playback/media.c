@@ -828,7 +828,7 @@ static inline bool mp_media_thread(mp_media_t *m)
 		int64_t ts_min = min_ts(m);
 		int64_t ts_cur = m->active_ts - m->ts_offset;
 		int64_t ts_delta = ts_cur - ts_min;
-		const uint64_t five_minutes = 5 * 60 * 1000 * (int64_t)(1000 * 1000);
+		const uint64_t five_minutes = 5 * 60 * 1000 * (uint64_t)(1000 * 1000);
 
 		/* every five minutes, try to readjust the source's sync */
 		if (!m->is_local_file && ts_min != 0 && os_gettime_ns() - last_set_time > five_minutes) {
