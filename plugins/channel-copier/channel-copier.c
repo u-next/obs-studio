@@ -44,36 +44,6 @@ static const char *ccopier_filter_get_name(void *unused)
 	return obs_module_text("Channel Copier");
 }
 
-/* inline apply volume to N samples inline in a deque to avoid copies. 
-   vol is a normalized value between 0 and 1, inclusive. */
-static void apply_volume(struct deque *dq, const float vol, size_t size)
-{
-	assert(size <= dq->size);
-
-	if (vol == 1.0f) {
-		return;
-	}
-
-	size_t start_size = (dq->capacity - dq->start_pos) / sizeof(float);
-	float *write_head = dq->data + dq->start_pos;
-	if (start_size < size) {
-		size_t ix = 0;
-		for (; ix < start_size; ix += 1) {
-			write_head[ix] *= vol;
-		}
-
-		/* loop around for the write */
-		write_head = dq->data;
-		for (; ix < size - start_size; ix += 1) {
-			write_head[ix] *= vol;
-		}
-	} else {
-		for (size_t ix = 0; ix < size; ix += 1) {
-			write_head[ix] *= vol;
-		}
-	}
-}
-
 // capture data from the target source so that we can overwrite the filter target.
 static void capture(void *param, obs_source_t *source, const struct audio_data *audio_data, bool muted)
 {
@@ -112,8 +82,10 @@ static void capture(void *param, obs_source_t *source, const struct audio_data *
 		if (audio_data->data[ix] != NULL) {
 			deque_push_back(&ccopier->source_data[ix], audio_data->data[ix],
 					audio_data->frames * sizeof(float));
-			/* Finally, we want to apply user volume changes from the input to the output. */
-			//apply_volume(&ccopier->source_data[ix], obs_source_get_volume(source), audio_data->frames);
+
+			/* We save the current volume to be read during mixing. 
+                           This might technically be a bit out of sync with the current settings
+                           but on follow-up copies it will be fixed. */
 			ccopier->volume[ix] = obs_source_get_volume(source);
 		}
 	}
