@@ -124,6 +124,7 @@ static void ffmpeg_source_defaults(obs_data_t *settings)
 	obs_data_set_default_int(settings, "reconnect_delay_sec", 10);
 	obs_data_set_default_int(settings, "buffering_mb", 2);
 	obs_data_set_default_int(settings, "speed_percent", 100);
+	obs_data_set_default_bool(settings, "unbuffered", false);
 	obs_data_set_default_bool(settings, "log_changes", true);
 }
 
@@ -175,6 +176,8 @@ static obs_properties_t *ffmpeg_source_getproperties(void *data)
 	obs_properties_add_bool(props, "looping", obs_module_text("Looping"));
 
 	obs_properties_add_bool(props, "restart_on_activate", obs_module_text("RestartWhenActivated"));
+
+	obs_properties_add_bool(props, "unbuffered", "Unbuffered");
 
 	prop = obs_properties_add_int_slider(props, "buffering_mb", obs_module_text("BufferingMB"), 0, 16, 1);
 	obs_property_int_set_suffix(prop, " MB");
@@ -397,6 +400,7 @@ static void ffmpeg_source_update(void *data, obs_data_t *settings)
 	bool is_stinger = obs_data_get_bool(settings, "is_stinger");
 	bool is_track_matte = obs_data_get_bool(settings, "is_track_matte");
 	bool should_restart_media = (is_local_file != s->is_local_file) || (is_stinger != s->is_stinger);
+	bool is_unbuffered = obs_data_get_bool(settings, "unbuffered");
 
 	const char *input;
 	const char *input_format;
@@ -409,6 +413,8 @@ static void ffmpeg_source_update(void *data, obs_data_t *settings)
 	bool is_looping;
 
 	bfree(s->input_format);
+
+	obs_source_set_async_unbuffered(s->source, is_unbuffered);
 
 	if (is_local_file) {
 		input = obs_data_get_string(settings, "local_file");
