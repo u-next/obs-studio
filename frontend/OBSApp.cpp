@@ -1097,6 +1097,8 @@ string OBSApp::GetVersionString(bool platform) const
 {
 	stringstream ver;
 
+	ver << "U-NEXT ";
+
 #ifdef HAVE_OBSCONFIG_H
 	ver << obs_get_version_string();
 #else
