@@ -18,6 +18,7 @@ struct channel_copier {
 	/* Each index is a mapping from ix to dest_ix */
 	ssize_t dest_channels[MAX_AUDIO_CHANNELS];
 
+	/* dest source (to which filter is applied) */
 	obs_weak_source_t *source;
 
 	/* the name of the source we pull data from*/
@@ -32,6 +33,9 @@ struct channel_copier {
 	/* Do we want to replace the current values or add to them? (mixing) */
 	bool mix_mode;
 
+	/* source volume at capture time, applied at MIX time. */
+	float volume;
+
 	pthread_mutex_t mutex;
 };
 
@@ -41,31 +45,7 @@ static const char *ccopier_filter_get_name(void *unused)
 	return obs_module_text("Channel Copier");
 }
 
-/* inline apply volume to N samples inline in a deque to avoid copies. */
-static void apply_volume(struct deque *dq, const float vol, size_t size)
-{
-	size_t start_size = (dq->capacity - dq->start_pos) / sizeof(float);
-	if (start_size < size) {
-		float *write_head = dq->data + dq->start_pos;
-		size_t ix = 0;
-		for (; ix < start_size; ix += 1) {
-			write_head[ix] *= vol;
-		}
-
-		/* loop around for the read */
-		write_head = dq->data;
-		for (; ix < size - start_size; ix += 1) {
-			write_head[ix] *= vol;
-		}
-	} else {
-		float *write_head = dq->data + dq->start_pos;
-		for (size_t ix = 0; ix < size; ix += 1) {
-			write_head[ix] *= vol;
-		}
-	}
-}
-
-// capture data from the target source so that we can overwrite the filter target.
+/* capture data from the target source so that we can overwrite the filter target. */
 static void capture(void *param, obs_source_t *source, const struct audio_data *audio_data, bool muted)
 {
 	UNUSED_PARAMETER(muted);
@@ -74,10 +54,15 @@ static void capture(void *param, obs_source_t *source, const struct audio_data *
 
 	pthread_mutex_lock(&ccopier->mutex);
 
-	// to avoid syncing issue, we only allow max 80ms of buffer
-	// but if that is shorter than 2x of the captures chunk size, use the latter
+	/* There could be a lag of the volume being captured vs. mix time. */
+	ccopier->volume = obs_source_get_volume(source);
+
+	/* esp. in mixing mode, we need to allow for quite a lot of timing slop, so we give
+           a whole half second to the capturing buffer. This allows for the audio to be smoothed
+           out in the event of eg. network issues resulting in a channel having spacing issues.
+           but if that is (somehow) shorter than 2x of the captures chunk size, use the latter */
 	size_t captured_chunk_size = audio_data->frames * sizeof(float);
-	size_t max_buffer_size = ccopier->sample_rate * 80 / 1000 * sizeof(float);
+	size_t max_buffer_size = ccopier->sample_rate * 500 / 1000 * sizeof(float);
 	if (max_buffer_size < captured_chunk_size * 2) {
 		max_buffer_size = captured_chunk_size * 2;
 	}
@@ -101,19 +86,19 @@ static void capture(void *param, obs_source_t *source, const struct audio_data *
            channels of a source. If you want to mute, mute this. */
 	for (size_t ix = 0; ix < MAX_AUDIO_CHANNELS; ix += 1) {
 		if (audio_data->data[ix] != NULL) {
-			deque_push_back(&ccopier->source_data[ix], audio_data->data[ix],
-					audio_data->frames * sizeof(float));
-			/* Finally, we want to apply user volume changes from the input to the output. */
-			apply_volume(&ccopier->source_data[ix], obs_source_get_volume(source), audio_data->frames);
+			size_t sample_count = audio_data->frames;
+
+			/* ultimately calling down to memcpy is gonna be faster if we can help it. */
+			deque_push_back(&ccopier->source_data[ix], audio_data->data[ix], sample_count * sizeof(float));
 		}
 	}
 
 	pthread_mutex_unlock(&ccopier->mutex);
 }
 
-/* as opposed to overwriting, this will pop from the queue and mix the
-   samples with whatever is already in the audio channel. */
-static void mix_samples_peek(struct deque *dq, float *dest, size_t size)
+/* Mix the audio from the input on this filter into the destination source audio while
+   applying the input source's volume. */
+static void mix_samples_peek(struct deque *dq, float *dest, size_t size, float vol)
 {
 	assert(size <= dq->size);
 	assert(dest);
@@ -123,21 +108,22 @@ static void mix_samples_peek(struct deque *dq, float *dest, size_t size)
 		float *read_head = dq->data + dq->start_pos;
 		size_t ix = 0;
 		for (; ix < start_size; ix += 1) {
-			dest[ix] += read_head[ix];
+			dest[ix] += read_head[ix] * vol; /* ix + dq->start_pos; */
 		}
 
 		/* loop around for the read */
 		read_head = dq->data;
 		for (; ix < size - start_size; ix += 1) {
-			dest[ix] += read_head[ix];
+			dest[ix] += read_head[ix] * vol; /* ix - start_size */
 		}
 	} else {
 		float *read_head = dq->data + dq->start_pos;
 		for (size_t ix = 0; ix < size; ix += 1) {
-			dest[ix] += read_head[ix];
+			dest[ix] += read_head[ix] * vol;
 		}
 	}
 }
+
 // This filter completely discards whatever the input data was and instead overwrites it
 // with the contents of the callback result.
 static struct obs_audio_data *ccopier_filter_audio(void *data, struct obs_audio_data *audio)
@@ -153,7 +139,7 @@ static struct obs_audio_data *ccopier_filter_audio(void *data, struct obs_audio_
 		if (audio->frames * sizeof(float) > ccopier->source_data[ix].size) {
 			populate_zero_count = audio->frames * sizeof(float) - ccopier->source_data[ix].size;
 			/* If we actually want to be pulling from this channel, its worth noting it is empty. */
-			if (ccopier->dest_channels[ix] != -1) {
+			if (ccopier->dest_channels[ix] != INVALID_MAPPING) {
 				blog(LOG_WARNING,
 				     "channel-copier: underflow on channel %zu, "
 				     "%lu samples filled with zero",
@@ -173,7 +159,9 @@ static struct obs_audio_data *ccopier_filter_audio(void *data, struct obs_audio_
 		/* In the event that there is overlap in channels (ex: duplicating)
                    we want to be careful to make sure each source is getting the same data. */
 		if (ccopier->mix_mode) {
-			mix_samples_peek(&ccopier->source_data[ix], (float *)audio->data[mapping], audio->frames);
+			float volume = ccopier->volume;
+			mix_samples_peek(&ccopier->source_data[ix], (float *)audio->data[mapping], audio->frames,
+					 volume);
 		} else {
 			deque_peek_front(&ccopier->source_data[ix], audio->data[mapping],
 					 audio->frames * sizeof(float));
@@ -259,6 +247,8 @@ static void *ccopier_filter_create(obs_data_t *settings, obs_source_t *ctx)
 	UNUSED_PARAMETER(ctx);
 
 	struct channel_copier *ccopier = bzalloc(sizeof(struct channel_copier));
+	memset(ccopier, 0, sizeof(struct channel_copier));
+
 	ccopier->source = NULL;
 	ccopier->sample_rate = audio_output_get_sample_rate(obs_get_audio());
 	ccopier->source_name = NULL;
