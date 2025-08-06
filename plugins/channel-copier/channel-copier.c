@@ -247,7 +247,6 @@ static void *ccopier_filter_create(obs_data_t *settings, obs_source_t *ctx)
 	UNUSED_PARAMETER(ctx);
 
 	struct channel_copier *ccopier = bzalloc(sizeof(struct channel_copier));
-	memset(ccopier, 0, sizeof(struct channel_copier));
 
 	ccopier->source = NULL;
 	ccopier->sample_rate = audio_output_get_sample_rate(obs_get_audio());
