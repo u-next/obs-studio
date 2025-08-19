@@ -2,10 +2,10 @@
 #include "obs.h"
 #include "util/bmem.h"
 #include "util/c99defs.h"
-#include <stdint.h> // uint8_t, uint32_t, uint64_t,
+#include <stdint.h>
 #include <obs-module.h>
 #include <stdio.h>
-#include <string.h> // memcpy
+#include <sys/_types/_null.h>
 #include <util/deque.h>
 #include <pthread.h>
 
@@ -58,11 +58,11 @@ static void capture(void *param, obs_source_t *source, const struct audio_data *
 	ccopier->volume = obs_source_get_volume(source);
 
 	/* esp. in mixing mode, we need to allow for quite a lot of timing slop, so we give
-           a whole half second to the capturing buffer. This allows for the audio to be smoothed
+           a whole 120ms to the capturing buffer. This allows for the audio to be smoothed
            out in the event of eg. network issues resulting in a channel having spacing issues.
            but if that is (somehow) shorter than 2x of the captures chunk size, use the latter */
 	size_t captured_chunk_size = audio_data->frames * sizeof(float);
-	size_t max_buffer_size = ccopier->sample_rate * 500 / 1000 * sizeof(float);
+	size_t max_buffer_size = ccopier->sample_rate * 120 / 1000 * sizeof(float);
 	if (max_buffer_size < captured_chunk_size * 2) {
 		max_buffer_size = captured_chunk_size * 2;
 	}
@@ -83,7 +83,7 @@ static void capture(void *param, obs_source_t *source, const struct audio_data *
 	/* note that we're explicitly ignoring the possibility of the source
            being muted. This filter is used specifically to create a pseudo-source
            that copies from other sources to allow MIDI interfaces etc. to control individual
-           channels of a source. If you want to mute, mute this. */
+           channels of a source. If you want to mute, mute the destination. */
 	for (size_t ix = 0; ix < MAX_AUDIO_CHANNELS; ix += 1) {
 		if (audio_data->data[ix] != NULL) {
 			size_t sample_count = audio_data->frames;
@@ -94,6 +94,14 @@ static void capture(void *param, obs_source_t *source, const struct audio_data *
 	}
 
 	pthread_mutex_unlock(&ccopier->mutex);
+}
+
+/* clear all ccopier buffers */
+static void clear_buffers(struct channel_copier *ccopier)
+{
+	for (size_t ix = 0; ix < MAX_AUDIO_CHANNELS; ix += 1) {
+		deque_pop_front(&ccopier->source_data[ix], NULL, ccopier->source_data[ix].size);
+	}
 }
 
 /* Mix the audio from the input on this filter into the destination source audio while
@@ -124,16 +132,16 @@ static void mix_samples_peek(struct deque *dq, float *dest, size_t size, float v
 	}
 }
 
-// This filter completely discards whatever the input data was and instead overwrites it
-// with the contents of the callback result.
+/* This filter completely discards whatever the input data was and instead overwrites it
+ with the contents of the callback result. */
 static struct obs_audio_data *ccopier_filter_audio(void *data, struct obs_audio_data *audio)
 {
 	struct channel_copier *ccopier = data;
 
 	pthread_mutex_lock(&ccopier->mutex);
 
-	// copy over the source data to the target in order.
-	// this will overwrite whatever is in the input buffer.
+	/* copy over the source data to the target in order.
+           this will overwrite whatever is in the input buffer. */
 	for (size_t ix = 0; ix < MAX_AUDIO_CHANNELS; ix += 1) {
 		size_t populate_zero_count = 0;
 		if (audio->frames * sizeof(float) > ccopier->source_data[ix].size) {
@@ -209,6 +217,8 @@ static void ccopier_filter_update(void *data, obs_data_t *settings)
 		ccopier->dest_channels[ix] = mapping;
 	}
 
+	clear_buffers(ccopier); /* TODO(Ben): remove */
+
 	ccopier->mix_mode = obs_data_get_bool(settings, "mix_mode");
 	pthread_mutex_unlock(&ccopier->mutex);
 
@@ -269,10 +279,10 @@ static void *ccopier_filter_create(obs_data_t *settings, obs_source_t *ctx)
 	return ccopier;
 }
 
-// `update' is called before some other sources may have been loaded.
-// the net of this is that we cannot register the src source in `update'
-// and instead must defer until `tick' is called.
-// This is only an issue when OBS starts with the ccopier already setup.
+/* `update' is called before some other sources may have been loaded.
+   the net of this is that we cannot register the src source in `update'
+   and instead must defer until `tick' is called.
+   This is only an issue when OBS starts with the ccopier already setup. */
 static void ccopier_filter_tick(void *data, float seconds)
 {
 	UNUSED_PARAMETER(seconds);
@@ -280,8 +290,8 @@ static void ccopier_filter_tick(void *data, float seconds)
 
 	pthread_mutex_lock(&ccopier->mutex);
 
-	// we only want to perform any logic in the event that there was a change
-	// to the filter fielded by `update'.
+	/* we only want to perform any logic in the event that there was a change
+           to the filter fielded by `update'. */
 	if (ccopier->source_name == NULL || ccopier->source != NULL) {
 		pthread_mutex_unlock(&ccopier->mutex);
 		return;
@@ -338,7 +348,6 @@ static bool add_sources(void *data, obs_source_t *source)
 
 static obs_properties_t *ccopier_filter_properites(void *data)
 {
-	//struct channel_copier *ccopier = data;
 	UNUSED_PARAMETER(data);
 	obs_properties_t *props = obs_properties_create();
 
