@@ -217,7 +217,7 @@ static void ccopier_filter_update(void *data, obs_data_t *settings)
 		ccopier->dest_channels[ix] = mapping;
 	}
 
-	clear_buffers(ccopier); /* TODO(Ben): remove */
+	clear_buffers(ccopier);
 
 	ccopier->mix_mode = obs_data_get_bool(settings, "mix_mode");
 	pthread_mutex_unlock(&ccopier->mutex);
