@@ -5,7 +5,6 @@
 #include <stdint.h>
 #include <obs-module.h>
 #include <stdio.h>
-#include <sys/_types/_null.h>
 #include <util/deque.h>
 #include <pthread.h>
 
