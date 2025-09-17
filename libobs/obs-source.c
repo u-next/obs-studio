@@ -3948,8 +3948,14 @@ static bool ready_async_frame(obs_source_t *source, uint64_t sys_time)
 	uint64_t frame_time = next_frame->timestamp;
 	uint64_t frame_offset = 0;
 
+	/* we don't want to erase too many frames at once so as to avoid creating
+         noticable discontinuities in the event that the decoder is much faster than
+         playback. This usually results in around 10 total frames needing erased. */
+	uint64_t unbuffered_erased_frames = 0;
+
 	if (source->async_unbuffered) {
-		while (source->async_frames.num > 1) {
+		while (source->async_frames.num > 1 && unbuffered_erased_frames < 3) {
+			unbuffered_erased_frames += 1;
 			da_erase(source->async_frames, 0);
 			remove_async_frame(source, next_frame);
 			next_frame = source->async_frames.array[0];
