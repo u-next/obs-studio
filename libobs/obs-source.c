@@ -21,6 +21,7 @@
 #include "media-io/format-conversion.h"
 #include "media-io/video-frame.h"
 #include "media-io/audio-io.h"
+#include "util/base.h"
 #include "util/threading.h"
 #include "util/platform.h"
 #include "util/util_uint64.h"
@@ -3959,6 +3960,10 @@ static bool ready_async_frame(obs_source_t *source, uint64_t sys_time)
 			da_erase(source->async_frames, 0);
 			remove_async_frame(source, next_frame);
 			next_frame = source->async_frames.array[0];
+		}
+
+		if (unbuffered_erased_frames > 0) {
+			blog(LOG_WARNING, "--> dropped_frames. drop_count=%lu", unbuffered_erased_frames);
 		}
 
 		source->last_frame_ts = next_frame->timestamp;
