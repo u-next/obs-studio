@@ -882,6 +882,9 @@ struct obs_source {
 
 	/* private data */
 	obs_data_t *private_settings;
+
+	/* The number of discarded unbuffered frames */
+	uint64_t discarded_frames;
 };
 
 extern struct obs_source_info *get_source_info(const char *id);
