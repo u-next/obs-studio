@@ -883,7 +883,8 @@ struct obs_source {
 	/* private data */
 	obs_data_t *private_settings;
 
-	/* The number of discarded unbuffered frames */
+	/* The number of discarded unbuffered frames. -1 for ignore. */
+	int64_t max_discarded_frames;
 	uint64_t discarded_frames;
 };
 

@@ -64,6 +64,8 @@ struct ffmpeg_source {
 	enum obs_media_state state;
 	obs_hotkey_pair_id play_pause_hotkey;
 	obs_hotkey_id stop_hotkey;
+
+	int max_discarded_frames;
 };
 
 // Used to safely cancel and join any active reconnect threads
@@ -126,6 +128,7 @@ static void ffmpeg_source_defaults(obs_data_t *settings)
 	obs_data_set_default_int(settings, "speed_percent", 100);
 	obs_data_set_default_bool(settings, "unbuffered", false);
 	obs_data_set_default_bool(settings, "log_changes", true);
+	obs_data_set_default_int(settings, "max_discard", -1);
 }
 
 static const char *media_filter =
@@ -181,6 +184,9 @@ static obs_properties_t *ffmpeg_source_getproperties(void *data)
 
 	prop = obs_properties_add_int_slider(props, "buffering_mb", obs_module_text("BufferingMB"), 0, 16, 1);
 	obs_property_int_set_suffix(prop, " MB");
+
+	prop = obs_properties_add_int_slider(props, "max_discard", "Max Discard", -1, 4096, 8);
+	obs_property_int_set_suffix(prop, " Frames");
 
 	obs_properties_add_text(props, "input", obs_module_text("Input"), OBS_TEXT_DEFAULT);
 
@@ -477,6 +483,9 @@ static void ffmpeg_source_update(void *data, obs_data_t *settings)
 	s->is_stinger = is_stinger;
 	s->is_track_matte = is_track_matte;
 	s->log_changes = obs_data_get_bool(settings, "log_changes");
+
+	s->max_discarded_frames = (int)obs_data_get_int(settings, "max_discard");
+	obs_source_set_max_unbuffered_discards(s->source, (int64_t)s->max_discarded_frames);
 
 	if (s->speed_percent < 1 || s->speed_percent > 200)
 		s->speed_percent = 100;

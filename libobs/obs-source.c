@@ -3939,9 +3939,15 @@ void remove_async_frame(obs_source_t *source, struct obs_source_frame *frame)
 	}
 }
 
+void obs_source_set_max_unbuffered_discards(obs_source_t *source, int64_t max_frames)
+{
+	if (source) {
+		source->max_discarded_frames = max_frames;
+	}
+}
+
 /* #define DEBUG_ASYNC_FRAMES 1 */
 
-static const uint64_t MAX_DISCARDED_FRAMES = 32ULL; /* Maximum frames to discard before reset. */
 static bool ready_async_frame(obs_source_t *source, uint64_t sys_time)
 {
 	struct obs_source_frame *next_frame = source->async_frames.array[0];
@@ -3966,12 +3972,14 @@ static bool ready_async_frame(obs_source_t *source, uint64_t sys_time)
 		}
 
 		if (unbuffered_erased_frames > 0) {
-			blog(LOG_WARNING, "--> dropped_frames. drop_count=%lu", unbuffered_erased_frames);
+			blog(LOG_WARNING, "Dropped frames. drop_count=%lu", unbuffered_erased_frames);
 		} else {
 			/* this is an attempt at decaying the number of dropped frames when we're
                            receiving a stable signal so that temporally quite disparate events will not
                            impact eachother.*/
-			source->discarded_frames -= 1;
+			if (source->discarded_frames > 0) {
+				source->discarded_frames -= 1;
+			}
 		}
 
 		source->discarded_frames += unbuffered_erased_frames;
@@ -3983,11 +3991,13 @@ static bool ready_async_frame(obs_source_t *source, uint64_t sys_time)
                    The more elegant solution would be to handle this at the SRT level or at the decoder
                    layer, but this is the simplest place to insert it, at least for testing.
                 */
-		if (source->discarded_frames > MAX_DISCARDED_FRAMES) {
-			blog(LOG_WARNING, "SIGNAL RESET. Frame drop count exceeded threshold. source=%s", source_name);
-			obs_source_update(source, NULL);
-
-			source->discarded_frames = 0;
+		if (source->max_discarded_frames > 0) {
+			if (source->discarded_frames > (uint64_t)source->max_discarded_frames) {
+				blog(LOG_WARNING, "SIGNAL RESET. Frame drop count exceeded threshold. source=%s",
+				     source_name);
+				source->discarded_frames = 0;
+				obs_source_update(source, NULL);
+			}
 		}
 
 		source->last_frame_ts = next_frame->timestamp;
