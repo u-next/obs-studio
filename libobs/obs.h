@@ -682,6 +682,9 @@ EXPORT void obs_enum_encoders(bool (*enum_proc)(void *, obs_encoder_t *), void *
 /** Enumerates encoders */
 EXPORT void obs_enum_services(bool (*enum_proc)(void *, obs_service_t *), void *param);
 
+/** Set the number of frames that will be discarded before a source is reset. */
+EXPORT void obs_source_set_max_unbuffered_discards(obs_source_t *source, int64_t max_frames);
+
 /**
  * Gets a source by its name.
  *
