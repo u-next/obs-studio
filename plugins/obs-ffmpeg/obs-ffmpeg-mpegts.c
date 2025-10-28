@@ -344,6 +344,7 @@ fail:
 	if (uc)
 		av_freep(&uc->priv_data);
 	av_freep(&uc);
+	stream->h = NULL;
 #if HAVE_WINSOCK2_H
 	WSACleanup();
 #endif
