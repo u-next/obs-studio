@@ -3947,7 +3947,7 @@ void obs_source_set_max_unbuffered_discards(obs_source_t *source, int64_t max_fr
 }
 
 /* #define DEBUG_ASYNC_FRAMES 1 */
-
+static volatile uint64_t last_time = 0;
 static bool ready_async_frame(obs_source_t *source, uint64_t sys_time)
 {
 	struct obs_source_frame *next_frame = source->async_frames.array[0];
@@ -3963,6 +3963,13 @@ static bool ready_async_frame(obs_source_t *source, uint64_t sys_time)
 	const char *source_name = obs_source_get_name(source);
 	source_name = source_name ? source_name : "NO_NAME";
 
+	uint64_t now = os_gettime_ns();
+
+	blog(LOG_WARNING, "source=%s async_buffered_frames=%zu time_delta=%" PRIu64, obs_source_get_name(source),
+	     source->async_frames.num, now - last_time);
+
+	last_time = now;
+
 	if (source->async_unbuffered) {
 		while (source->async_frames.num > 1 && unbuffered_erased_frames < 3) {
 			unbuffered_erased_frames += 1;
@@ -3972,7 +3979,7 @@ static bool ready_async_frame(obs_source_t *source, uint64_t sys_time)
 		}
 
 		if (unbuffered_erased_frames > 0) {
-			blog(LOG_WARNING, "Dropped frames. drop_count=%lu", unbuffered_erased_frames);
+			blog(LOG_WARNING, "Dropped frames. drop_count=%" PRId64, unbuffered_erased_frames);
 		} else {
 			/* this is an attempt at decaying the number of dropped frames when we're
                            receiving a stable signal so that temporally quite disparate events will not
