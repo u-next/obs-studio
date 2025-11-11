@@ -499,9 +499,7 @@ static void mp_media_calc_next_ns(mp_media_t *m)
 		delta = 0;
 		m->seek_next_ts = false;
 	} else {
-#ifdef _DEBUG
-		assert(delta >= 0);
-#endif
+
 		if (delta < 0)
 			delta = 0;
 		if (delta > 3000000000)
@@ -606,6 +604,8 @@ static inline bool mp_media_sleep(mp_media_t *m)
 
 				os_sleep_ms(timeout ? timeout_ms : delta_ms);
 			}
+		} else {
+			m->next_ns = os_gettime_ns();
 		}
 	}
 
@@ -816,8 +816,9 @@ static inline bool mp_media_thread(mp_media_t *m)
 			if (m->has_audio)
 				mp_media_next_audio(m);
 
-			if (!mp_media_prepare_frames(m))
+			if (!mp_media_prepare_frames(m)) {
 				return false;
+			}
 			if (mp_media_eof(m))
 				continue;
 
