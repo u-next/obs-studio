@@ -609,7 +609,8 @@ static inline bool mp_media_sleep(mp_media_t *m)
 				timeout_ms = 200;
 				timeout = delta_ms > timeout_ms;
 
-				os_sleep_ms(timeout ? timeout_ms : delta_ms);
+				//os_sleep_ms(timeout ? timeout_ms : delta_ms);
+				os_sleep_ms(39);
 			}
 		}
 	}
