@@ -603,6 +603,7 @@ static inline bool mp_media_sleep(mp_media_t *m)
 			if (delta_ms > 0) {
 				static const uint32_t timeout_ms = 200;
 				timeout = delta_ms > timeout_ms;
+				blog(LOG_WARNING, "media_sleep_ms=%u", timeout ? timeout_ms : delta_ms);
 				os_sleep_ms(timeout ? timeout_ms : delta_ms);
 			}
 		}
