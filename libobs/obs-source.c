@@ -3941,13 +3941,6 @@ void remove_async_frame(obs_source_t *source, struct obs_source_frame *frame)
 	}
 }
 
-void obs_source_set_max_unbuffered_discards(obs_source_t *source, int64_t max_frames)
-{
-	if (source) {
-		source->max_discarded_frames = max_frames;
-	}
-}
-
 /* #define DEBUG_ASYNC_FRAMES 1 */
 static volatile uint64_t last_time = 0;
 static bool ready_async_frame(obs_source_t *source, uint64_t sys_time)
@@ -3973,7 +3966,7 @@ static bool ready_async_frame(obs_source_t *source, uint64_t sys_time)
 	last_time = now;
 
 	if (source->async_unbuffered) {
-		while (source->async_frames.num > 1 && unbuffered_erased_frames < 3) {
+		while (source->async_frames.num > 3) {
 			unbuffered_erased_frames += 1;
 			da_erase(source->async_frames, 0);
 			remove_async_frame(source, next_frame);
@@ -3982,31 +3975,6 @@ static bool ready_async_frame(obs_source_t *source, uint64_t sys_time)
 
 		if (unbuffered_erased_frames > 0) {
 			blog(LOG_WARNING, "Dropped frames. drop_count=%" PRId64, unbuffered_erased_frames);
-		} else {
-			/* this is an attempt at decaying the number of dropped frames when we're
-                           receiving a stable signal so that temporally quite disparate events will not
-                           impact eachother.*/
-			if (source->discarded_frames > 0) {
-				source->discarded_frames -= 1;
-			}
-		}
-
-		source->discarded_frames += unbuffered_erased_frames;
-
-		/* When an unstable SRT connection is input into an unbuffered source, basically any
-                   upstream network interruption will put it into an unrecoverable state unless the
-                   OBS source is reset.
-
-                   The more elegant solution would be to handle this at the SRT level or at the decoder
-                   layer, but this is the simplest place to insert it, at least for testing.
-                */
-		if (source->max_discarded_frames > 0) {
-			if (source->discarded_frames > (uint64_t)source->max_discarded_frames) {
-				blog(LOG_WARNING, "SIGNAL RESET. Frame drop count exceeded threshold. source=%s",
-				     source_name);
-				source->discarded_frames = 0;
-				obs_source_update(source, NULL);
-			}
 		}
 
 		source->last_frame_ts = next_frame->timestamp;

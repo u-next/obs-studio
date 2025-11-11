@@ -593,29 +593,21 @@ bool mp_media_reset(mp_media_t *m)
 static inline bool mp_media_sleep(mp_media_t *m)
 {
 	bool timeout = false;
-	bool accepted_nextns = false;
-
-	uint32_t delta_ms = 0;
-	uint32_t timeout_ms = 0;
 
 	if (!m->next_ns) {
 		m->next_ns = os_gettime_ns();
-		accepted_nextns = true;
 	} else {
 		const uint64_t t = os_gettime_ns();
 		if (m->next_ns > t) {
-			delta_ms = (uint32_t)((m->next_ns - t + 500000) / 1000000);
+			const uint32_t delta_ms = (uint32_t)((m->next_ns - t + 500000) / 1000000);
 			if (delta_ms > 0) {
-				timeout_ms = 200;
+				const uint32_t timeout_ms = 200;
 				timeout = delta_ms > timeout_ms;
 
-				//os_sleep_ms(timeout ? timeout_ms : delta_ms);
-				os_sleep_ms(39);
+				os_sleep_ms(timeout ? timeout_ms : delta_ms);
 			}
 		}
 	}
-	blog(LOG_WARNING, "media_sleep_ms=%u delta_ms=%u accepted_nextns=%d", timeout ? timeout_ms : delta_ms,
-	     accepted_nextns, accepted_nextns);
 
 	return timeout;
 }
