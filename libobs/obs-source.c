@@ -3423,7 +3423,6 @@ static void obs_source_output_video_internal(obs_source_t *source, const struct 
 		return;
 
 	if (!frame) {
-		blog(LOG_WARNING, "No frame in output call");
 		pthread_mutex_lock(&source->async_mutex);
 		source->async_active = false;
 		source->last_frame_ts = 0;
@@ -3432,7 +3431,6 @@ static void obs_source_output_video_internal(obs_source_t *source, const struct 
 		return;
 	}
 
-	blog(LOG_WARNING, "Frame present in output call ts=%" PRIu64, frame->timestamp);
 	source_profiler_async_frame_received(source);
 
 	struct obs_source_frame *output = cache_video(source, frame);
@@ -3942,7 +3940,6 @@ void remove_async_frame(obs_source_t *source, struct obs_source_frame *frame)
 }
 
 /* #define DEBUG_ASYNC_FRAMES 1 */
-static volatile uint64_t last_time = 0;
 static bool ready_async_frame(obs_source_t *source, uint64_t sys_time)
 {
 	struct obs_source_frame *next_frame = source->async_frames.array[0];
@@ -3957,13 +3954,6 @@ static bool ready_async_frame(obs_source_t *source, uint64_t sys_time)
 	uint64_t unbuffered_erased_frames = 0;
 	const char *source_name = obs_source_get_name(source);
 	source_name = source_name ? source_name : "NO_NAME";
-
-	uint64_t now = os_gettime_ns();
-
-	blog(LOG_WARNING, "source=%s async_buffered_frames=%zu time_delta=%" PRIu64, source_name,
-	     source->async_frames.num, now - last_time);
-
-	last_time = now;
 
 	if (source->async_unbuffered) {
 		while (source->async_frames.num > 3) {
