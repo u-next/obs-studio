@@ -21,7 +21,6 @@
 #include "media-io/format-conversion.h"
 #include "media-io/video-frame.h"
 #include "media-io/audio-io.h"
-#include "util/base.h"
 #include "util/threading.h"
 #include "util/platform.h"
 #include "util/util_uint64.h"
