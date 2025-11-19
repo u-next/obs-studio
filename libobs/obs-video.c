@@ -23,6 +23,7 @@
 #include "graphics/vec4.h"
 #include "media-io/format-conversion.h"
 #include "media-io/video-frame.h"
+#include "util/platform.h"
 
 #ifdef _WIN32
 #define WIN32_MEAN_AND_LEAN
@@ -802,19 +803,14 @@ void add_ready_encoder_group(obs_encoder_t *encoder)
 	pthread_mutex_unlock(&obs->video.encoder_group_mutex);
 }
 
-FILE *ofp = NULL;
 static inline void video_sleep(struct obs_core_video *video, uint64_t *p_time, uint64_t interval_ns)
 {
-	if (ofp == NULL) {
-		ofp = fopen("/tmp/video_sleep.txt", "a");
-	}
 	struct obs_vframe_info vframe_info;
 	uint64_t cur_time = *p_time;
 	uint64_t t = cur_time + interval_ns;
 	int count;
 
 	if (os_sleepto_ns(t)) {
-		fprintf(ofp, "slept: %" PRIu64 "\n", interval_ns);
 		*p_time = t;
 		count = 1;
 	} else {
@@ -824,7 +820,6 @@ static inline void video_sleep(struct obs_core_video *video, uint64_t *p_time, u
 		const uint64_t clamped_diff = (diff > (int64_t)interval_ns) ? (uint64_t)diff : interval_ns;
 		count = (int)(clamped_diff / interval_ns);
 		*p_time = cur_time + interval_ns * count;
-		fprintf(ofp, "overslept: %" PRIu64 "\n", udiff);
 	}
 
 	video->total_frames += count;
@@ -871,6 +866,7 @@ static const char *output_frame_render_video_name = "render_video";
 static const char *output_frame_download_frame_name = "download_frame";
 static const char *output_frame_gs_flush_name = "gs_flush";
 static const char *output_frame_output_video_data_name = "output_video_data";
+FILE *ofp = NULL;
 static inline void output_frame(struct obs_core_video_mix *video)
 {
 	const bool raw_active = video->raw_was_active;
@@ -905,6 +901,13 @@ static inline void output_frame(struct obs_core_video_mix *video)
 	gs_leave_context();
 	profile_end(output_frame_gs_context_name);
 
+	uint64_t now = os_gettime_ns();
+
+	if (ofp == NULL) {
+		ofp = fopen("/tmp/buffering.txt", "a");
+		fprintf(ofp, "[%" PRIu64 "] -------start-------\n", now);
+	}
+
 	if (raw_active && frame_ready) {
 		struct obs_vframe_info vframe_info;
 		deque_pop_front(&video->vframe_info_buffer, &vframe_info, sizeof(vframe_info));
@@ -913,6 +916,13 @@ static inline void output_frame(struct obs_core_video_mix *video)
 		profile_start(output_frame_output_video_data_name);
 		output_video_data(video, &frame, vframe_info.count);
 		profile_end(output_frame_output_video_data_name);
+
+		fprintf(ofp,
+			"[%" PRIu64 "] output_frame: frame_ready=%d raw_active=%d frame_infos=%zu frame_count=%d\n",
+			now, frame_ready, raw_active, video->vframe_info_buffer.size, vframe_info.count);
+	} else {
+		fprintf(ofp, "[%" PRIu64 "] output_frame: frame_ready=%d raw_active=%d frame_infos=%zu frame_count=0\n",
+			now, frame_ready, raw_active, video->vframe_info_buffer.size);
 	}
 
 	if (++video->cur_texture == NUM_TEXTURES)
