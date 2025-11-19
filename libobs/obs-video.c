@@ -802,14 +802,19 @@ void add_ready_encoder_group(obs_encoder_t *encoder)
 	pthread_mutex_unlock(&obs->video.encoder_group_mutex);
 }
 
+FILE *ofp = NULL;
 static inline void video_sleep(struct obs_core_video *video, uint64_t *p_time, uint64_t interval_ns)
 {
+	if (ofp == NULL) {
+		ofp = fopen("/tmp/video_sleep.txt", "a");
+	}
 	struct obs_vframe_info vframe_info;
 	uint64_t cur_time = *p_time;
 	uint64_t t = cur_time + interval_ns;
 	int count;
 
 	if (os_sleepto_ns(t)) {
+		fprintf(ofp, "slept: %" PRIu64 "\n", interval_ns);
 		*p_time = t;
 		count = 1;
 	} else {
@@ -819,6 +824,7 @@ static inline void video_sleep(struct obs_core_video *video, uint64_t *p_time, u
 		const uint64_t clamped_diff = (diff > (int64_t)interval_ns) ? (uint64_t)diff : interval_ns;
 		count = (int)(clamped_diff / interval_ns);
 		*p_time = cur_time + interval_ns * count;
+		fprintf(ofp, "overslept: %" PRIu64 "\n", udiff);
 	}
 
 	video->total_frames += count;
