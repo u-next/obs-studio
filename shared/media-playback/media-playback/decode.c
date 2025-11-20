@@ -361,10 +361,10 @@ bool mp_decode_next(struct mp_decode *d)
 		}
 
 		ret = decode_packet(d, &got_frame);
-        if (first_log_2) {
-            blog(LOG_WARNING, "Finished decode: %" PRIu64 "\n", os_gettime_ns());
-            first_log_2 = false;
-        }
+		if (first_log_2 && got_frame) {
+			blog(LOG_WARNING, "Finished decode: %" PRIu64 "\n", os_gettime_ns());
+			first_log_2 = false;
+		}
 
 		if (!got_frame && ret == 0) {
 			d->eof = true;
