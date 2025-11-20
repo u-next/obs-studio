@@ -274,9 +274,13 @@ static int decode_packet(struct mp_decode *d, int *got_frame)
 
 	if (!accepted_packet) {
 		blog(LOG_WARNING, "First packet: %" PRIu64 "\n", os_gettime_ns());
-		accepted_packet = true;
+		
 	}
 	ret = avcodec_receive_frame(d->decoder, d->in_frame);
+    if (!accepted_packet) {
+        blog(LOG_WARNING, "Received packet: %" PRIu64 "\n", os_gettime_ns());
+        accepted_packet = true;
+    }
 	if (ret != 0 && ret != AVERROR(EAGAIN)) {
 		if (ret == AVERROR_EOF)
 			ret = 0;
@@ -327,6 +331,7 @@ static int decode_packet(struct mp_decode *d, int *got_frame)
 	return ret;
 }
 
+static bool first_log_2 = true;
 bool mp_decode_next(struct mp_decode *d)
 {
 	bool eof = d->m->eof;
@@ -356,6 +361,10 @@ bool mp_decode_next(struct mp_decode *d)
 		}
 
 		ret = decode_packet(d, &got_frame);
+        if (first_log_2) {
+            blog(LOG_WARNING, "Finished decode: %" PRIu64 "\n", os_gettime_ns());
+            first_log_2 = false;
+        }
 
 		if (!got_frame && ret == 0) {
 			d->eof = true;
