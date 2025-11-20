@@ -21,6 +21,7 @@
 #include "media-io/format-conversion.h"
 #include "media-io/video-frame.h"
 #include "media-io/audio-io.h"
+#include "util/base.h"
 #include "util/threading.h"
 #include "util/platform.h"
 #include "util/util_uint64.h"
@@ -3946,7 +3947,6 @@ static bool ready_async_frame(obs_source_t *source, uint64_t sys_time)
 	uint64_t sys_offset = sys_time - source->last_sys_timestamp;
 	uint64_t frame_time = next_frame->timestamp;
 	uint64_t frame_offset = 0;
-
 	uint64_t unbuffered_erased_frames = 0;
 
 	if (source->async_unbuffered) {

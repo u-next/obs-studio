@@ -20,6 +20,8 @@
 #include "media.h"
 #include <libavutil/mastering_display_metadata.h>
 
+uint64_t os_gettime_ns();
+
 enum AVHWDeviceType hw_priority[] = {
 	AV_HWDEVICE_TYPE_CUDA,  AV_HWDEVICE_TYPE_D3D11VA, AV_HWDEVICE_TYPE_DXVA2,        AV_HWDEVICE_TYPE_VAAPI,
 	AV_HWDEVICE_TYPE_VDPAU, AV_HWDEVICE_TYPE_QSV,     AV_HWDEVICE_TYPE_VIDEOTOOLBOX, AV_HWDEVICE_TYPE_NONE,
@@ -264,11 +266,16 @@ static inline int64_t get_estimated_duration(struct mp_decode *d, int64_t last_p
 	}
 }
 
+static bool accepted_packet = false;
 static int decode_packet(struct mp_decode *d, int *got_frame)
 {
 	int ret;
 	*got_frame = 0;
 
+	if (!accepted_packet) {
+		blog(LOG_WARNING, "First packet: %" PRIu64 "\n", os_gettime_ns());
+		accepted_packet = true;
+	}
 	ret = avcodec_receive_frame(d->decoder, d->in_frame);
 	if (ret != 0 && ret != AVERROR(EAGAIN)) {
 		if (ret == AVERROR_EOF)

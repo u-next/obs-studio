@@ -135,6 +135,8 @@ static inline bool video_output_cur_frame(struct video_output *video)
 
 	frame_info = &video->cache[video->first_added];
 
+	blog(LOG_WARNING, "frame_count=%d\n", frame_info->count);
+
 	pthread_mutex_unlock(&video->data_mutex);
 
 	/* -------------------------------- */

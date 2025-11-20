@@ -24,6 +24,7 @@
 #include <utility/OBSTranslator.hpp>
 #include <utility/platform.hpp>
 #include <widgets/VolumeAccessibleInterface.hpp>
+#include <iostream>
 
 #include <qt-wrappers.hpp>
 #include <util/platform.h>
@@ -909,12 +910,16 @@ static bool vc_runtime_outdated()
 #define ALLOW_PORTABLE_MODE 0
 #endif
 
+uint64_t os_gettime_ns();
 int main(int argc, char *argv[])
 {
 #ifndef _WIN32
-	signal(SIGPIPE, SIG_IGN);
 
+	signal(SIGPIPE, SIG_IGN);
+    
 	struct sigaction sig_handler;
+    
+    std::cout << "startup" << os_gettime_ns() << "\n";
 
 	sig_handler.sa_handler = OBSApp::SigIntSignalHandler;
 	sigemptyset(&sig_handler.sa_mask);
