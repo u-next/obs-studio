@@ -17,6 +17,7 @@
 
 #include <inttypes.h>
 #include <math.h>
+#include <objc/objc.h>
 
 #include "media-io/format-conversion.h"
 #include "media-io/video-frame.h"
@@ -1182,6 +1183,7 @@ void process_media_actions(obs_source_t *source)
 	}
 }
 
+static bool async_tick_1 = true;
 static void async_tick(obs_source_t *source)
 {
 	uint64_t sys_time = obs->video.video_time;
@@ -1208,6 +1210,9 @@ static void async_tick(obs_source_t *source)
 	if (source->cur_async_frame)
 		source->async_update_texture = set_async_texture_size(source, source->cur_async_frame);
 
+	if (async_tick_1) {
+		blog(LOG_WARNING, "async_video ticked: %" PRIu64 "\n", os_gettime_ns());
+	}
 	pthread_mutex_unlock(&source->async_mutex);
 }
 
@@ -3940,6 +3945,7 @@ void remove_async_frame(obs_source_t *source, struct obs_source_frame *frame)
 }
 
 /* #define DEBUG_ASYNC_FRAMES 1 */
+static bool ready_async_1 = true;
 static bool ready_async_frame(obs_source_t *source, uint64_t sys_time)
 {
 	struct obs_source_frame *next_frame = source->async_frames.array[0];
@@ -3948,6 +3954,10 @@ static bool ready_async_frame(obs_source_t *source, uint64_t sys_time)
 	uint64_t frame_time = next_frame->timestamp;
 	uint64_t frame_offset = 0;
 	uint64_t unbuffered_erased_frames = 0;
+
+	if (ready_async_1) {
+		blog(LOG_WARNING, "async_frame ready: %" PRIu64 "\n", os_gettime_ns());
+	}
 
 	if (source->async_unbuffered) {
 		while (source->async_frames.num > 3) {
@@ -3962,6 +3972,10 @@ static bool ready_async_frame(obs_source_t *source, uint64_t sys_time)
 		}
 
 		source->last_frame_ts = next_frame->timestamp;
+		if (ready_async_1) {
+			blog(LOG_WARNING, "async_frame done: %" PRIu64 "\n", os_gettime_ns());
+			ready_async_1 = false;
+		}
 		return true;
 	}
 
