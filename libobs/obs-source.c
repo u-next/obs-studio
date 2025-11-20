@@ -17,7 +17,6 @@
 
 #include <inttypes.h>
 #include <math.h>
-#include <objc/objc.h>
 
 #include "media-io/format-conversion.h"
 #include "media-io/video-frame.h"
@@ -1212,6 +1211,7 @@ static void async_tick(obs_source_t *source)
 
 	if (async_tick_1) {
 		blog(LOG_WARNING, "async_video ticked: %" PRIu64 "\n", os_gettime_ns());
+		async_tick_1 = false;
 	}
 	pthread_mutex_unlock(&source->async_mutex);
 }
