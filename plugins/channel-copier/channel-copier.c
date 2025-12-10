@@ -58,11 +58,16 @@ static void capture(void *param, obs_source_t *source, const struct audio_data *
 	ccopier->volume = obs_source_get_volume(source);
 
 	/* esp. in mixing mode, we need to allow for quite a lot of timing slop, so we give
-           a whole half second to the capturing buffer. This allows for the audio to be smoothed
+           80ms to the capturing buffer (multiple frames). This allows for the audio to be smoothed
            out in the event of eg. network issues resulting in a channel having spacing issues.
-           but if that is (somehow) shorter than 2x of the captures chunk size, use the latter */
+           but if that is (somehow) shorter than 2x of the captures chunk size, use the latter.
+           If this buffer ends up too large, we will end up over-buffering and potentially causing
+           extra audio desync over multiple frames.
+           Because this audio playback, in the best of times, will result in 1/FPS ms of lag,
+           this can be quite catostrophic, resulting in 1/FPS + captured_chunk_size audio desync.
+         */
 	size_t captured_chunk_size = audio_data->frames * sizeof(float);
-	size_t max_buffer_size = ccopier->sample_rate * 500 / 1000 * sizeof(float);
+	size_t max_buffer_size = ccopier->sample_rate * 80 / 1000 * sizeof(float);
 	if (max_buffer_size < captured_chunk_size * 2) {
 		max_buffer_size = captured_chunk_size * 2;
 	}
