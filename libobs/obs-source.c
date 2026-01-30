@@ -1121,6 +1121,7 @@ static inline struct obs_source_frame *get_closest_frame(obs_source_t *source, u
 static void filter_frame(obs_source_t *source, struct obs_source_frame **ref_frame)
 {
 	struct obs_source_frame *frame = *ref_frame;
+	blog(LOG_WARNING, "unext filter_frame_start=%" PRIu64 "", os_gettime_ns());
 	if (frame) {
 		os_atomic_inc_long(&frame->refs);
 		frame = filter_async_video(source, frame);
@@ -1129,6 +1130,7 @@ static void filter_frame(obs_source_t *source, struct obs_source_frame **ref_fra
 	}
 
 	*ref_frame = frame;
+	blog(LOG_WARNING, "unext filter_frame_finish=%" PRIu64 "", os_gettime_ns());
 }
 
 void process_media_actions(obs_source_t *source)
@@ -1184,7 +1186,7 @@ void process_media_actions(obs_source_t *source)
 static void async_tick(obs_source_t *source)
 {
 	uint64_t sys_time = obs->video.video_time;
-
+	blog(LOG_WARNING, "unext async_tick_start=%" PRIu64 "", os_gettime_ns());
 	pthread_mutex_lock(&source->async_mutex);
 
 	if (deinterlacing_enabled(source)) {
@@ -1208,6 +1210,7 @@ static void async_tick(obs_source_t *source)
 		source->async_update_texture = set_async_texture_size(source, source->cur_async_frame);
 
 	pthread_mutex_unlock(&source->async_mutex);
+	blog(LOG_WARNING, "unext async_tick_finish=%" PRIu64 "", os_gettime_ns());
 }
 
 void obs_source_video_tick(obs_source_t *source, float seconds)
@@ -1217,6 +1220,7 @@ void obs_source_video_tick(obs_source_t *source, float seconds)
 	if (!obs_source_valid(source, "obs_source_video_tick"))
 		return;
 
+	blog(LOG_WARNING, "unext obs_source_video_tick_start=%" PRIu64 "", os_gettime_ns());
 	if (source->info.type == OBS_SOURCE_TYPE_TRANSITION)
 		obs_transition_tick(source, seconds);
 
@@ -1284,6 +1288,7 @@ void obs_source_video_tick(obs_source_t *source, float seconds)
 
 	source->async_rendered = false;
 	source->deinterlace_rendered = false;
+	blog(LOG_WARNING, "unext obs_source_video_tick_finish=%" PRIu64 "", os_gettime_ns());
 }
 
 /* unless the value is 3+ hours worth of frames, this won't overflow */
@@ -2369,6 +2374,7 @@ static inline void check_to_swap_bgrx_bgra(obs_source_t *source, struct obs_sour
 
 static void obs_source_update_async_video(obs_source_t *source)
 {
+	blog(LOG_WARNING, "unext obs_source_update_async_video_start=%" PRIu64 "", os_gettime_ns());
 	if (!source->async_rendered) {
 		source->async_rendered = true;
 
@@ -2390,6 +2396,7 @@ static void obs_source_update_async_video(obs_source_t *source)
 			obs_source_release_frame(source, frame);
 		}
 	}
+	blog(LOG_WARNING, "unext obs_source_update_async_video_finish=%" PRIu64 "", os_gettime_ns());
 }
 
 static void rotate_async_video(obs_source_t *source, long rotation)
@@ -2761,6 +2768,7 @@ static const char *get_type_format(enum obs_source_type type)
 
 static inline void render_video(obs_source_t *source)
 {
+	blog(LOG_WARNING, "unext render_video_start=%" PRIu64 "", os_gettime_ns());
 	if (source->info.type != OBS_SOURCE_TYPE_FILTER && (source->info.output_flags & OBS_SOURCE_VIDEO) == 0) {
 		if (source->filter_parent)
 			obs_source_skip_video_filter(source);
@@ -2799,6 +2807,7 @@ static inline void render_video(obs_source_t *source)
 		obs_source_render_async_video(source);
 
 	GS_DEBUG_MARKER_END();
+	blog(LOG_WARNING, "unext render_video_finish=%" PRIu64 "", os_gettime_ns());
 }
 
 void obs_source_video_render(obs_source_t *source)
@@ -3949,6 +3958,7 @@ static bool ready_async_frame(obs_source_t *source, uint64_t sys_time)
 
 	uint64_t unbuffered_erased_frames = 0;
 
+	blog(LOG_WARNING, "unext ready_async_frame_start=%" PRIu64 "", os_gettime_ns());
 	if (source->async_unbuffered) {
 		while (source->async_frames.num > 3) {
 			unbuffered_erased_frames += 1;
@@ -3962,6 +3972,7 @@ static bool ready_async_frame(obs_source_t *source, uint64_t sys_time)
 		}
 
 		source->last_frame_ts = next_frame->timestamp;
+		blog(LOG_WARNING, "unext ready_async_frame_finish=%" PRIu64 "point=0", os_gettime_ns());
 		return true;
 	}
 
@@ -3980,6 +3991,7 @@ static bool ready_async_frame(obs_source_t *source, uint64_t sys_time)
 		blog(LOG_DEBUG, "timing jump");
 #endif
 		source->last_frame_ts = next_frame->timestamp;
+		blog(LOG_WARNING, "unext ready_async_frame_finish=%" PRIu64 "point=1", os_gettime_ns());
 		return true;
 	} else {
 		frame_offset = frame_time - source->last_frame_ts;
@@ -4008,8 +4020,10 @@ static bool ready_async_frame(obs_source_t *source, uint64_t sys_time)
 
 		remove_async_frame(source, frame);
 
-		if (source->async_frames.num == 1)
+		if (source->async_frames.num == 1) {
+			blog(LOG_WARNING, "unext ready_async_frame_finish=%" PRIu64 "point=2", os_gettime_ns());
 			return true;
+		}
 
 		frame = next_frame;
 		next_frame = source->async_frames.array[1];
@@ -4031,6 +4045,7 @@ static bool ready_async_frame(obs_source_t *source, uint64_t sys_time)
 		blog(LOG_DEBUG, "no frame!");
 #endif
 
+	blog(LOG_WARNING, "unext ready_async_frame_finish=%" PRIu64 "point=3", os_gettime_ns());
 	return frame != NULL;
 }
 
@@ -4065,6 +4080,7 @@ struct obs_source_frame *obs_source_get_frame(obs_source_t *source)
 	if (!obs_source_valid(source, "obs_source_get_frame"))
 		return NULL;
 
+	blog(LOG_WARNING, "unext obs_get_frame_start=%" PRIu64 "", os_gettime_ns());
 	pthread_mutex_lock(&source->async_mutex);
 
 	frame = source->cur_async_frame;
@@ -4076,6 +4092,7 @@ struct obs_source_frame *obs_source_get_frame(obs_source_t *source)
 
 	pthread_mutex_unlock(&source->async_mutex);
 
+	blog(LOG_WARNING, "unext obs_get_frame_finish=%" PRIu64 "", os_gettime_ns());
 	return frame;
 }
 

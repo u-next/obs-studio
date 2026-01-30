@@ -818,10 +818,13 @@ static inline bool mp_media_thread(mp_media_t *m)
 			if (m->has_audio)
 				mp_media_next_audio(m);
 
+			blog(LOG_WARNING, "unext mp_media_prepare_frames_start=%" PRIu64 "", os_gettime_ns());
 			if (!mp_media_prepare_frames(m))
 				return false;
 			if (mp_media_eof(m))
 				continue;
+
+			blog(LOG_WARNING, "unext mp_media_prepare_frames_finish=%" PRIu64 "", os_gettime_ns());
 
 			mp_media_calc_next_ns(m);
 		}
