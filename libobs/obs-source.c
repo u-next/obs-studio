@@ -2397,7 +2397,7 @@ static void obs_source_update_async_video(obs_source_t *source)
 		}
 	}
 	blog(LOG_WARNING, "unext obs_source_update_async_video_finish=%" PRIu64 "", os_gettime_ns());
-}
+}   
 
 static void rotate_async_video(obs_source_t *source, long rotation)
 {
@@ -3972,7 +3972,7 @@ static bool ready_async_frame(obs_source_t *source, uint64_t sys_time)
 		}
 
 		source->last_frame_ts = next_frame->timestamp;
-		blog(LOG_WARNING, "unext ready_async_frame_finish=%" PRIu64 "point=0", os_gettime_ns());
+		blog(LOG_WARNING, "unext ready_async_frame_finish=%" PRIu64 ",point=0", os_gettime_ns());
 		return true;
 	}
 
@@ -3991,7 +3991,7 @@ static bool ready_async_frame(obs_source_t *source, uint64_t sys_time)
 		blog(LOG_DEBUG, "timing jump");
 #endif
 		source->last_frame_ts = next_frame->timestamp;
-		blog(LOG_WARNING, "unext ready_async_frame_finish=%" PRIu64 "point=1", os_gettime_ns());
+		blog(LOG_WARNING, "unext ready_async_frame_finish=%" PRIu64 ",point=1", os_gettime_ns());
 		return true;
 	} else {
 		frame_offset = frame_time - source->last_frame_ts;
@@ -4021,7 +4021,7 @@ static bool ready_async_frame(obs_source_t *source, uint64_t sys_time)
 		remove_async_frame(source, frame);
 
 		if (source->async_frames.num == 1) {
-			blog(LOG_WARNING, "unext ready_async_frame_finish=%" PRIu64 "point=2", os_gettime_ns());
+			blog(LOG_WARNING, "unext ready_async_frame_finish=%" PRIu64 ",point=2", os_gettime_ns());
 			return true;
 		}
 
@@ -4045,7 +4045,7 @@ static bool ready_async_frame(obs_source_t *source, uint64_t sys_time)
 		blog(LOG_DEBUG, "no frame!");
 #endif
 
-	blog(LOG_WARNING, "unext ready_async_frame_finish=%" PRIu64 "point=3", os_gettime_ns());
+	blog(LOG_WARNING, "unext ready_async_frame_finish=%" PRIu64 ",point=3", os_gettime_ns());
 	return frame != NULL;
 }
 
