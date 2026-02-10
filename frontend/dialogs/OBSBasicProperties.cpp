@@ -153,7 +153,7 @@ OBSBasicProperties::~OBSBasicProperties()
 		obs_source_dec_active(sourceClone);
 	}
 	obs_source_dec_showing(source);
-	main->SaveProject();
+	main->SaveProjectNow();
 	main->UpdateContextBarDeferred(true);
 }
 

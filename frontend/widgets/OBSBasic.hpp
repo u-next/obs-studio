@@ -1063,7 +1063,6 @@ private:
 
 	void ClearSceneData();
 	void LogScenes();
-	void SaveProjectNow();
 	void ShowMissingFilesDialog(obs_missing_files_t *files);
 
 	void SetupNewSceneCollection(const std::string &collectionName);
@@ -1088,6 +1087,7 @@ public slots:
 
 	void SaveProjectDeferred();
 	void SaveProject();
+	void SaveProjectNow();
 
 	bool CreateNewSceneCollection(const QString &name);
 

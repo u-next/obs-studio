@@ -590,7 +590,7 @@ void OBSBasicFilters::closeEvent(QCloseEvent *event)
 
 	obs_display_remove_draw_callback(ui->preview->GetDisplay(), OBSBasicFilters::DrawPreview, this);
 
-	main->SaveProject();
+	main->SaveProjectNow();
 }
 
 bool OBSBasicFilters::nativeEvent(const QByteArray &, void *message, qintptr *)
