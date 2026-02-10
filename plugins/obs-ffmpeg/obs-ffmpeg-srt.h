@@ -141,6 +141,10 @@ static int libsrt_network_wait_fd(URLContext *h, int eid, int write)
 	SRTSOCKET ready[1];
 	SRTSOCKET error[1];
 	SRTContext *s = (SRTContext *)h->priv_data;
+	if (!s) {
+		return libsrt_neterrno(h);
+	}
+
 	if (write) {
 		ret = srt_epoll_wait(eid, error, &errlen, ready, &len, POLLING_TIME, 0, 0, 0, 0);
 	} else {
