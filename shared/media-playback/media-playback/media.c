@@ -598,16 +598,10 @@ static inline bool mp_media_sleep(mp_media_t *m)
 		const uint64_t t = os_gettime_ns();
 		if (m->next_ns > t) {
 			const uint32_t delta_ms = (uint32_t)((m->next_ns - t + 500000) / 1000000);
-			if (delta_ms > 0) {
-				static const uint32_t timeout_ms = 200;
-				timeout = delta_ms > timeout_ms;
+			static const uint32_t timeout_ms = 200;
+			timeout = delta_ms > timeout_ms;
 
-				os_sleep_ms(timeout ? timeout_ms : delta_ms);
-			}
-		} else {
-			/* safe guard for signal interruptions. without this piece of logic in place,
-                           we will end up with a very stuttery output with unbuffered sources. */
-			m->next_ns = os_gettime_ns();
+			os_sleep_ms(timeout ? timeout_ms : delta_ms);
 		}
 	}
 
