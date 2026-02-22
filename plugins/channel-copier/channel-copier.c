@@ -192,6 +192,7 @@ static void ccopier_filter_update(void *data, obs_data_t *settings)
 		obs_source_t *old_source = obs_weak_source_get_source(ccopier->source);
 		if (old_source) {
 			obs_source_remove_audio_capture_callback(old_source, capture, ccopier);
+			obs_source_release(old_source);
 		}
 
 		obs_weak_source_release(ccopier->source);
@@ -232,6 +233,7 @@ static void ccopier_filter_destroy(void *data)
 		obs_source_t *old_source = obs_weak_source_get_source(ccopier->source);
 		if (old_source) {
 			obs_source_remove_audio_capture_callback(old_source, capture, ccopier);
+			obs_source_release(old_source);
 		}
 
 		obs_weak_source_release(ccopier->source);
