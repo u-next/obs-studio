@@ -196,7 +196,7 @@ static inline bool mp_media_ready_to_start(mp_media_t *m)
 {
 	if (m->has_audio && !m->a.eof && !m->a.frame_ready)
 		return false;
-	if (m->has_video && !m->v.eof && !m->v.frame_ready)
+	if (m->has_video && !m->v.eof && !m->v.frame_ready && m->v.got_first_keyframe)
 		return false;
 	return true;
 }
