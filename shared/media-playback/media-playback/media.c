@@ -472,7 +472,7 @@ void mp_media_next_video(mp_media_t *m, bool preload)
 		frame->trc = VIDEO_TRC_DEFAULT;
 	}
 
-	if (!m->is_local_file && !d->got_first_keyframe) {
+	if (!d->got_first_keyframe) {
 		if (!(f->flags & AV_FRAME_FLAG_KEY))
 			return;
 
@@ -580,6 +580,7 @@ bool mp_media_reset(mp_media_t *m)
 	}
 
 	m->pause = false;
+
 
 	if (!active && m->is_local_file && m->v_preload_cb)
 		mp_media_next_video(m, true);
@@ -701,6 +702,12 @@ static bool init_avformat(mp_media_t *m)
 	m->reconnecting = false;
 	m->has_video = mp_decode_init(m, AVMEDIA_TYPE_VIDEO, m->hw);
 	m->has_audio = mp_decode_init(m, AVMEDIA_TYPE_AUDIO, m->hw);
+
+	/* The assumption here is that any local file will begin with a keyframe.
+           This is not necessarily true but its a long-standing assumption. */
+	if (m->has_video && m->is_local_file) {
+		m->v.got_first_keyframe = true;
+	}
 
 	if (!m->has_video && !m->has_audio) {
 		blog(LOG_WARNING,
