@@ -3939,7 +3939,6 @@ void remove_async_frame(obs_source_t *source, struct obs_source_frame *frame)
 }
 
 /* #define DEBUG_ASYNC_FRAMES 1 */
-
 static bool ready_async_frame(obs_source_t *source, uint64_t sys_time)
 {
 	struct obs_source_frame *next_frame = source->async_frames.array[0];
@@ -3948,11 +3947,18 @@ static bool ready_async_frame(obs_source_t *source, uint64_t sys_time)
 	uint64_t frame_time = next_frame->timestamp;
 	uint64_t frame_offset = 0;
 
+	uint64_t unbuffered_erased_frames = 0;
+
 	if (source->async_unbuffered) {
-		while (source->async_frames.num > 1) {
+		while (source->async_frames.num > 3) {
+			unbuffered_erased_frames += 1;
 			da_erase(source->async_frames, 0);
 			remove_async_frame(source, next_frame);
 			next_frame = source->async_frames.array[0];
+		}
+
+		if (unbuffered_erased_frames > 0) {
+			blog(LOG_WARNING, "Dropped frames. drop_count=%" PRId64, unbuffered_erased_frames);
 		}
 
 		source->last_frame_ts = next_frame->timestamp;

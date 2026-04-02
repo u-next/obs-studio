@@ -196,7 +196,7 @@ static inline bool mp_media_ready_to_start(mp_media_t *m)
 {
 	if (m->has_audio && !m->a.eof && !m->a.frame_ready)
 		return false;
-	if (m->has_video && !m->v.eof && !m->v.frame_ready)
+	if (m->has_video && !m->v.eof && !m->v.frame_ready && m->v.got_first_keyframe)
 		return false;
 	return true;
 }
@@ -472,7 +472,7 @@ void mp_media_next_video(mp_media_t *m, bool preload)
 		frame->trc = VIDEO_TRC_DEFAULT;
 	}
 
-	if (!m->is_local_file && !d->got_first_keyframe) {
+	if (!d->got_first_keyframe) {
 		if (!(f->flags & AV_FRAME_FLAG_KEY))
 			return;
 
@@ -499,9 +499,7 @@ static void mp_media_calc_next_ns(mp_media_t *m)
 		delta = 0;
 		m->seek_next_ts = false;
 	} else {
-#ifdef _DEBUG
-		assert(delta >= 0);
-#endif
+
 		if (delta < 0)
 			delta = 0;
 		if (delta > 3000000000)
@@ -583,6 +581,7 @@ bool mp_media_reset(mp_media_t *m)
 
 	m->pause = false;
 
+
 	if (!active && m->is_local_file && m->v_preload_cb)
 		mp_media_next_video(m, true);
 	if (stopping && m->stop_cb)
@@ -600,11 +599,10 @@ static inline bool mp_media_sleep(mp_media_t *m)
 		const uint64_t t = os_gettime_ns();
 		if (m->next_ns > t) {
 			const uint32_t delta_ms = (uint32_t)((m->next_ns - t + 500000) / 1000000);
-			if (delta_ms > 0) {
-				static const uint32_t timeout_ms = 200;
-				timeout = delta_ms > timeout_ms;
-				os_sleep_ms(timeout ? timeout_ms : delta_ms);
-			}
+			static const uint32_t timeout_ms = 200;
+			timeout = delta_ms > timeout_ms;
+
+			os_sleep_ms(timeout ? timeout_ms : delta_ms);
 		}
 	}
 
@@ -704,6 +702,12 @@ static bool init_avformat(mp_media_t *m)
 	m->reconnecting = false;
 	m->has_video = mp_decode_init(m, AVMEDIA_TYPE_VIDEO, m->hw);
 	m->has_audio = mp_decode_init(m, AVMEDIA_TYPE_AUDIO, m->hw);
+
+	/* The assumption here is that any local file will begin with a keyframe.
+           This is not necessarily true but its a long-standing assumption. */
+	if (m->has_video && m->is_local_file) {
+		m->v.got_first_keyframe = true;
+	}
 
 	if (!m->has_video && !m->has_audio) {
 		blog(LOG_WARNING,

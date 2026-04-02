@@ -17,6 +17,7 @@
 
 #include <inttypes.h>
 #include "util/platform.h"
+#include "util/threading-posix.h"
 #include "util/util_uint64.h"
 #include "util/array-serializer.h"
 #include "graphics/math-extra.h"
@@ -489,6 +490,10 @@ void obs_output_actual_stop(obs_output_t *output, bool force, uint64_t ts)
 			ctrack->caption_head = ctrack->caption_tail;
 		}
 	}
+
+	// Force set reconnecting to false to account for different
+	// states.
+	os_atomic_set_bool(&output->reconnecting, false);
 
 	da_clear(output->keyframe_group_tracking);
 }

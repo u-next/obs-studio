@@ -584,6 +584,9 @@ static int libsrt_open(URLContext *h, const char *uri)
 	char buf[1024];
 	int ret = 0;
 
+	char *smoother = NULL;
+	char *streamid = NULL;
+
 	if (srt_startup() < 0) {
 		blog(LOG_ERROR, "[obs-ffmpeg mpegts muxer / libsrt]: libsrt failed to load");
 		return OBS_OUTPUT_CONNECT_FAILED;
@@ -688,19 +691,23 @@ static int libsrt_open(URLContext *h, const char *uri)
 		}
 		if (av_find_info_tag(buf, sizeof(buf), "streamid", p)) {
 			av_freep(&s->streamid);
-			s->streamid = av_strdup(buf);
-			if (!s->streamid) {
+			streamid = av_strdup(buf);
+			if (!streamid) {
 				ret = AVERROR(ENOMEM);
 				goto err;
 			}
+
+			s->streamid = streamid;
 		}
 		if (av_find_info_tag(buf, sizeof(buf), "smoother", p)) {
 			av_freep(&s->smoother);
-			s->smoother = av_strdup(buf);
-			if (!s->smoother) {
+			smoother = av_strdup(buf);
+			if (!smoother) {
 				ret = AVERROR(ENOMEM);
 				goto err;
 			}
+
+			s->smoother = smoother;
 		}
 		if (av_find_info_tag(buf, sizeof(buf), "messageapi", p)) {
 			s->messageapi = strtol(buf, NULL, 10);
@@ -742,8 +749,25 @@ static int libsrt_open(URLContext *h, const char *uri)
 	return 0;
 
 err:
-	av_freep(&s->smoother);
-	av_freep(&s->streamid);
+	/* XXX(Ben):
+           This leaves the `s' struct with a reference to free'd memory!
+           This is accounting for an issue where writing to a closed connection
+           will result in the epoll check detecting the socket closed and returning
+           an error, such that libsrt is non-zero and jumps here. However, the
+           struct has been free'd by `libsrt_close' and thus the `s' reference is
+           no longer valid. We don't want to leave these strings hanging though, and
+           so we free the memory, potentially leaving the references dangling in the
+           event that another error condition was reached. It seems to me that this
+           causes no issues in the current code, but it could in the future.
+           Currently, the path for failure here is to immediately free the structure
+           containing these references.
+
+           This fixes a bug where if you stop streaming via SRT on a target that has closed,
+           you will be unable to start streaming again.
+        */
+	av_freep(&smoother);
+	av_freep(&streamid);
+
 	srt_cleanup();
 	return ret;
 }
@@ -795,6 +819,8 @@ static int libsrt_close(URLContext *h)
 		av_freep(&s->streamid);
 	if (s->passphrase)
 		av_freep(&s->passphrase);
+    if (s->smoother)
+        av_freep(&s->smoother);
 	/* Log stream stats. */
 	SRT_TRACEBSTATS perf = {0};
 	srt_bstats(s->fd, &perf, 1);
