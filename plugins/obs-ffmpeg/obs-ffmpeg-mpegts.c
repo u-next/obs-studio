@@ -334,8 +334,10 @@ static inline int connect_mpegts_url(struct ffmpeg_output *stream, bool is_rist)
 	stream->h = uc;
 	if (is_rist)
 		err = librist_open(uc, uc->url);
-	else
+	else {
+		/* Note: in the event of failure, uc->priv_data contains invalid references. */
 		err = libsrt_open(uc, uc->url);
+	}
 
 	if (err < 0)
 		goto fail;
@@ -541,6 +543,7 @@ void ffmpeg_mpegts_data_free(struct ffmpeg_output *stream, struct ffmpeg_data *d
 		free(data->audio_infos);
 	}
 
+	
 	if (data->output) {
 		if (data->config.is_rist || data->config.is_srt) {
 			close_mpegts_url(stream, data->config.is_rist);
@@ -715,7 +718,7 @@ static int mpegts_process_packet(struct ffmpeg_output *output)
 	av_freep(&buf);
 
 	if (ret < 0) {
-		ffmpeg_mpegts_log_error(LOG_WARNING, &output->ff_data, "process_packet: Error writing packet: %s",
+		ffmpeg_mpegts_log_error(LOG_WARNING, &output->ff_data, "process_packet: Error writing packet: %s\n",
 					av_err2str(ret));
 
 		/* Treat "Invalid data found when processing input" and
@@ -992,13 +995,16 @@ static void ffmpeg_mpegts_stop(void *data, uint64_t ts)
 {
 	struct ffmpeg_output *output = data;
 
+	// if we were connecting before, we're not now!
+	os_atomic_set_bool(&output->connecting, false);
+
+	ffmpeg_mpegts_full_stop(output);
 	if (output->active) {
 		if (ts > 0) {
 			output->stop_ts = ts;
 			os_atomic_set_bool(&output->stopping, true);
 		}
 
-		ffmpeg_mpegts_full_stop(output);
 	} else {
 		obs_output_signal_stop(output->output, OBS_OUTPUT_SUCCESS);
 	}
