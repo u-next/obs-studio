@@ -22,6 +22,8 @@ struct channel_copier {
 
 	obs_weak_source_t *source;
 
+	char *source_name;
+
 	/* save from the source to overwrite onto self. */
 	struct deque source_data[2];
 
@@ -127,19 +129,24 @@ static void ccopier_filter_update(void *data, obs_data_t *settings)
 		}
 	}
 
-	const char *sidechain_name = obs_data_get_string(settings, "ccopier_source");
+	if (ccopier->source_name) {
+		bfree(ccopier->source_name);
+	}
 
-	bool valid_sidechain = *sidechain_name && strcmp(sidechain_name, "none") != 0;
-	if (!valid_sidechain) {
+	const char *source_name = obs_data_get_string(settings, "ccopier_source");
+
+	if (source_name == NULL || strcmp(source_name, "none") == 0) {
 		return;
 	}
+
+	ccopier->source_name = bstrdup(source_name);
 
 	/* get the matched channel */
 	ccopier->mapped_channel = obs_data_get_int(settings, "ccopier_chan") * 2;
 
 	pthread_mutex_lock(&ccopier->mutex);
 
-	obs_source_t *source = obs_get_source_by_name(sidechain_name);
+	obs_source_t *source = obs_get_source_by_name(source_name);
 	obs_weak_source_t *weak_ref = source ? obs_source_get_weak_source(source) : NULL;
 
 	ccopier->source = weak_ref;
@@ -159,6 +166,11 @@ static void ccopier_filter_destroy(void *data)
 	struct channel_copier *ccopier = data;
 
 	pthread_mutex_destroy(&ccopier->mutex);
+
+	if (ccopier->source_name) {
+		bfree(ccopier->source_name);
+		ccopier->source_name = NULL;
+	}
 
 	if (ccopier->source) {
 		obs_source_t *old_source = obs_weak_source_get_source(ccopier->source);
@@ -196,8 +208,21 @@ static void *ccopier_filter_create(obs_data_t *settings, obs_source_t *ctx)
 
 static void ccopier_filter_tick(void *data, float seconds)
 {
-	UNUSED_PARAMETER(data);
 	UNUSED_PARAMETER(seconds);
+	struct channel_copier *ccopier = data;
+	pthread_mutex_lock(&ccopier->mutex);
+	if (ccopier->source_name && !ccopier->source) {
+		obs_source_t *source = obs_get_source_by_name(ccopier->source_name);
+		obs_weak_source_t *weak_ref = source ? obs_source_get_weak_source(source) : NULL;
+
+		ccopier->source = weak_ref;
+
+		if (source) {
+			obs_source_add_audio_capture_callback(source, capture, ccopier);
+			obs_source_release(source);
+		}
+	}
+	pthread_mutex_unlock(&ccopier->mutex);
 	return;
 }
 
