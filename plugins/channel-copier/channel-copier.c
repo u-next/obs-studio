@@ -129,14 +129,14 @@ static void ccopier_filter_update(void *data, obs_data_t *settings)
 		}
 	}
 
-	if (ccopier->source_name) {
-		bfree(ccopier->source_name);
-	}
-
 	const char *source_name = obs_data_get_string(settings, "ccopier_source");
 
 	if (source_name == NULL || strcmp(source_name, "none") == 0) {
 		return;
+	}
+
+	if (ccopier->source_name) {
+		bfree(ccopier->source_name);
 	}
 
 	ccopier->source_name = bstrdup(source_name);
