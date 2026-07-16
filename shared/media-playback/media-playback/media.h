@@ -103,6 +103,10 @@ struct mp_media {
 	bool seek;
 	bool seek_next_ts;
 	int64_t seek_pos;
+
+	/* if possible, we attempt to take SEI timestamps for sync. */
+	int64_t sync_pts_offset;
+	bool sync_offset_set;
 };
 
 typedef struct mp_media mp_media_t;

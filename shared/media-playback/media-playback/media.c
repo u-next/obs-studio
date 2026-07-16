@@ -17,6 +17,7 @@
 #include <util/platform.h>
 
 #include <assert.h>
+#include <sys/time.h>
 
 #include "media-playback.h"
 #include "media.h"
@@ -24,6 +25,7 @@
 
 #include <libavdevice/avdevice.h>
 #include <libavutil/imgutils.h>
+#include <libavutil/timecode.h>
 
 static int64_t base_sys_ts = 0;
 
@@ -373,6 +375,16 @@ void mp_media_next_audio(mp_media_t *m)
 	m->a_cb(m->opaque, &audio);
 }
 
+/* stolen from timecode.c */
+static uint32_t bcd2uint(uint8_t bcd)
+{
+	uint32_t low = bcd & 0xf;
+	uint32_t high = bcd >> 4;
+	if (low > 9 || high > 9)
+		return 0;
+	return low + 10 * high;
+}
+
 void mp_media_next_video(mp_media_t *m, bool preload)
 {
 	struct mp_decode *d = &m->v;
@@ -381,6 +393,43 @@ void mp_media_next_video(mp_media_t *m, bool preload)
 	enum video_colorspace new_space;
 	enum video_range_type new_range;
 	AVFrame *f = d->frame;
+
+	const uint32_t sync_offset_seconds = 4;
+
+	/* To the extent possible, we want to respect SEI timestamps as a source of truth for synchronization.
+           This introduces some problems because there is /very little/ information in a SEI timestamp, we cannot
+           for example, assert confidently the timezone of the source stream. We can infer, but it is not contained
+           within. */
+	if (f && !m->sync_offset_set) {
+		AVFrameSideData *sd = av_frame_get_side_data(f, AV_FRAME_DATA_S12M_TIMECODE);
+		if (sd) {
+			const uint32_t tc_packed = ((uint32_t *)sd->data)[1];
+			const uint32_t hh = bcd2uint(tc_packed & 0x3f);
+			const uint32_t mm = bcd2uint(tc_packed >> 8 & 0x7f);
+			const uint32_t ss = bcd2uint(tc_packed >> 16 & 0x7f);
+			const uint32_t ff = bcd2uint(tc_packed >> 24 & 0x3f); /* fractional component */
+
+			double fps = (double)d->stream->avg_frame_rate.num / d->stream->avg_frame_rate.den;
+			int64_t frame_ns = (int64_t)((ff / fps) * 1000000000.0);
+			int64_t sei_ns = ((int64_t)hh * 3600 + (int64_t)mm * 60 + (int64_t)(ss + sync_offset_seconds)) *
+						 1000000000LL +
+					 frame_ns;
+
+			struct timeval tv;
+			gettimeofday(&tv, NULL);
+			struct tm *t = localtime(&tv.tv_sec); /* hello timezone hell */
+			int64_t wall_ns = ((int64_t)t->tm_hour * 3600 + (int64_t)t->tm_min * 60 + (int64_t)t->tm_sec) *
+						  1000000000LL +
+					  (int64_t)tv.tv_usec * 1000;
+
+			int64_t drift_ns = sei_ns - wall_ns;
+			printf("%s drift: %" PRId64 "\n", m->path, drift_ns);
+
+			m->next_ns = (int64_t)os_gettime_ns() + drift_ns;
+			m->sync_offset_set = true;
+			return;
+		}
+	}
 
 	if (!preload) {
 		if (!mp_media_can_play_frame(m, d))
@@ -581,6 +630,9 @@ bool mp_media_reset(mp_media_t *m)
 
 	m->pause = false;
 
+	if (!m->is_local_file) {
+		m->v.got_first_keyframe = false;
+	}
 
 	if (!active && m->is_local_file && m->v_preload_cb)
 		mp_media_next_video(m, true);
