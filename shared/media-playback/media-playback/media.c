@@ -613,6 +613,8 @@ bool mp_media_reset(mp_media_t *m)
 	m->stopping = false;
 	pthread_mutex_unlock(&m->mutex);
 
+	m->sync_offset_set = false;
+
 	if (!mp_media_prepare_frames(m))
 		return false;
 
