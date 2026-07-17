@@ -53,6 +53,7 @@ struct ffmpeg_source {
 	bool is_stinger;
 	bool is_track_matte;
 	bool log_changes;
+	bool sei_sync;
 
 	pthread_t reconnect_thread;
 	pthread_mutex_t reconnect_mutex;
@@ -196,6 +197,8 @@ static obs_properties_t *ffmpeg_source_getproperties(void *data)
 
 	prop = obs_properties_add_bool(props, "close_when_inactive", obs_module_text("CloseFileWhenInactive"));
 
+	prop = obs_properties_add_bool(props, "sei_sync", obs_module_text("SEISync"));
+
 	obs_property_set_long_description(prop, obs_module_text("CloseFileWhenInactive.ToolTip"));
 
 	prop = obs_properties_add_int_slider(props, "speed_percent", obs_module_text("SpeedPercentage"), 1, 200, 1);
@@ -312,6 +315,7 @@ static void ffmpeg_source_open(struct ffmpeg_source *s)
 			.reconnecting = s->reconnecting,
 			.request_preload = s->is_stinger,
 			.full_decode = s->full_decode,
+			.sei_sync = s->sei_sync,
 		};
 
 		s->media = media_playback_create(&info);
@@ -462,6 +466,7 @@ static void ffmpeg_source_update(void *data, obs_data_t *settings)
 	s->input_format = input_format ? bstrdup(input_format) : NULL;
 	s->is_hw_decoding = is_hw_decoding;
 	s->full_decode = obs_data_get_bool(settings, "full_decode");
+	s->sei_sync = obs_data_get_bool(settings, "sei_sync");
 	s->is_clear_on_media_end = obs_data_get_bool(settings, "clear_on_media_end");
 	s->restart_on_activate = !astrcmpi_n(input, RIST_PROTO, sizeof(RIST_PROTO) - 1)
 					 ? false

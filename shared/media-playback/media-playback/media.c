@@ -400,7 +400,7 @@ void mp_media_next_video(mp_media_t *m, bool preload)
            This introduces some problems because there is /very little/ information in a SEI timestamp, we cannot
            for example, assert confidently the timezone of the source stream. We can infer, but it is not contained
            within. */
-	if (f && !m->sync_offset_set) {
+	if (f && m->should_sync) {
 		AVFrameSideData *sd = av_frame_get_side_data(f, AV_FRAME_DATA_S12M_TIMECODE);
 		if (sd) {
 			const uint32_t tc_packed = ((uint32_t *)sd->data)[1];
@@ -418,16 +418,19 @@ void mp_media_next_video(mp_media_t *m, bool preload)
 			struct timeval tv;
 			gettimeofday(&tv, NULL);
 			struct tm *t = localtime(&tv.tv_sec); /* hello timezone hell */
-			int64_t wall_ns = ((int64_t)t->tm_hour * 3600 + (int64_t)t->tm_min * 60 + (int64_t)t->tm_sec) *
-						  1000000000LL +
-					  (int64_t)tv.tv_usec * 1000;
+			const int64_t wall_ns =
+				((int64_t)t->tm_hour * 3600 + (int64_t)t->tm_min * 60 + (int64_t)t->tm_sec) *
+					1000000000LL +
+				(int64_t)tv.tv_usec * 1000;
 
-			int64_t drift_ns = sei_ns - wall_ns;
-			printf("%s drift: %" PRId64 "\n", m->path, drift_ns);
-
-			m->next_ns = (int64_t)os_gettime_ns() + drift_ns;
-			m->sync_offset_set = true;
-			return;
+			const int64_t drift_ns = sei_ns - wall_ns;
+			const int64_t err = llabs(drift_ns - m->sync_offset_ns);
+			if (err > (300000000LL)) { /* 300ms difference forces a resync */
+				blog(LOG_INFO, "SYNC: %s drift: %" PRId64 " %" PRId64 "\n", m->path, drift_ns, err);
+				m->sync_offset_ns = drift_ns;
+				m->next_ns = (int64_t)os_gettime_ns() + drift_ns;
+				return;
+			}
 		}
 	}
 
@@ -612,8 +615,6 @@ bool mp_media_reset(mp_media_t *m)
 	active = m->active;
 	m->stopping = false;
 	pthread_mutex_unlock(&m->mutex);
-
-	m->sync_offset_set = false;
 
 	if (!mp_media_prepare_frames(m))
 		return false;
@@ -942,6 +943,7 @@ bool mp_media_init(mp_media_t *media, const struct mp_media_info *info)
 	media->speed = info->speed;
 	media->request_preload = info->request_preload;
 	media->is_local_file = info->is_local_file;
+	media->should_sync = info->sei_sync;
 	da_init(media->packet_pool);
 
 	if (!info->is_local_file || media->speed < 1 || media->speed > 200)
