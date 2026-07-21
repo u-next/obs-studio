@@ -106,6 +106,7 @@ struct mp_media {
 
 	/* if possible, we attempt to take SEI timestamps for sync. */
 	int64_t sync_offset_ns;
+	bool sync_set;
 	bool should_sync;
 };
 

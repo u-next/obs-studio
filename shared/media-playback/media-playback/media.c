@@ -426,14 +426,14 @@ void mp_media_next_video(mp_media_t *m, bool preload)
 
 			const int64_t drift_ns = sei_ns - wall_ns;
 			if (drift_ns > 0) {
-				if (!m->sync_offset_ns) {
+				if (!m->sync_set) {
+					m->sync_set = true;
 					m->sync_offset_ns = drift_ns;
 					m->next_ns = (int64_t)os_gettime_ns() + drift_ns;
+
 				} else {
-					m->sync_offset_ns += (drift_ns - m->sync_offset_ns) / 100;
+					m->next_ns += drift_ns / 100;
 				}
-				blog(LOG_INFO, "SYNC: %c %" PRId64 "ms\n", m->path[14],
-				     m->sync_offset_ns / 1000 / 1000);
 			}
 		}
 	}
