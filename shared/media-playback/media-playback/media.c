@@ -367,7 +367,8 @@ void mp_media_next_audio(mp_media_t *m)
 	audio.format = convert_sample_format(f->format);
 	audio.frames = f->nb_samples;
 	audio.timestamp = m->full_decode ? d->frame_pts
-					 : m->base_ts + d->frame_pts - m->start_ts + m->play_sys_ts - base_sys_ts;
+					 : m->base_ts + d->frame_pts - m->start_ts + m->play_sys_ts - base_sys_ts +
+						   m->sync_offset_ns;
 
 	if (audio.format == AUDIO_FORMAT_UNKNOWN)
 		return;
@@ -394,7 +395,7 @@ void mp_media_next_video(mp_media_t *m, bool preload)
 	enum video_range_type new_range;
 	AVFrame *f = d->frame;
 
-	const uint32_t sync_offset_seconds = 4;
+	const uint32_t sync_offset_seconds = 6;
 
 	/* To the extent possible, we want to respect SEI timestamps as a source of truth for synchronization.
            This introduces some problems because there is /very little/ information in a SEI timestamp, we cannot
@@ -424,12 +425,15 @@ void mp_media_next_video(mp_media_t *m, bool preload)
 				(int64_t)tv.tv_usec * 1000;
 
 			const int64_t drift_ns = sei_ns - wall_ns;
-			const int64_t err = llabs(drift_ns - m->sync_offset_ns);
-			if (err > (300000000LL)) { /* 300ms difference forces a resync */
-				blog(LOG_INFO, "SYNC: %s drift: %" PRId64 " %" PRId64 "\n", m->path, drift_ns, err);
-				m->sync_offset_ns = drift_ns;
-				m->next_ns = (int64_t)os_gettime_ns() + drift_ns;
-				return;
+			if (drift_ns > 0) {
+				if (!m->sync_offset_ns) {
+					m->sync_offset_ns = drift_ns;
+					m->next_ns = (int64_t)os_gettime_ns() + drift_ns;
+				} else {
+					m->sync_offset_ns += (drift_ns - m->sync_offset_ns) / 100;
+				}
+				blog(LOG_INFO, "SYNC: %c %" PRId64 "ms\n", m->path[14],
+				     m->sync_offset_ns / 1000 / 1000);
 			}
 		}
 	}
@@ -498,7 +502,8 @@ void mp_media_next_video(mp_media_t *m, bool preload)
 		return;
 
 	frame->timestamp = m->full_decode ? d->frame_pts
-					  : (m->base_ts + d->frame_pts - m->start_ts + m->play_sys_ts - base_sys_ts);
+					  : (m->base_ts + d->frame_pts - m->start_ts + m->play_sys_ts - base_sys_ts +
+					     m->sync_offset_ns);
 
 	frame->width = f->width;
 	frame->height = f->height;
@@ -607,6 +612,7 @@ bool mp_media_reset(mp_media_t *m)
 	m->eof = false;
 	m->base_ts += next_ts;
 	m->seek_next_ts = false;
+	m->sync_offset_ns = 0;
 
 	seek_to(m, start_time);
 
