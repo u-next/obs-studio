@@ -426,7 +426,9 @@ void mp_media_next_video(mp_media_t *m, bool preload)
 
 			const int64_t drift_ns = sei_ns - wall_ns;
 			if (drift_ns > 0) {
-				if (!m->sync_set) {
+				/* wait to set the base sync until we've received the first keyframe. This is
+                                   mostly important for x265 and NVDEC, which are a little less friendly than videotoolbox.*/
+				if (!m->sync_set && m->v.got_first_keyframe) {
 					m->sync_set = true;
 					m->sync_offset_ns = drift_ns;
 					m->next_ns = (int64_t)os_gettime_ns() + drift_ns;
@@ -613,6 +615,7 @@ bool mp_media_reset(mp_media_t *m)
 	m->base_ts += next_ts;
 	m->seek_next_ts = false;
 	m->sync_offset_ns = 0;
+	m->sync_set = true;
 
 	seek_to(m, start_time);
 
