@@ -108,6 +108,7 @@ struct mp_media {
 	int64_t sync_offset_ns;
 	bool sync_set;
 	bool should_sync;
+	bool await_first_keyframe;
 };
 
 typedef struct mp_media mp_media_t;

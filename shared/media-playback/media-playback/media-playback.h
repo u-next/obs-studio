@@ -47,6 +47,7 @@ struct mp_media_info {
 	bool request_preload;
 	bool full_decode;
 	bool sei_sync;
+	bool await_first_keyframe;
 };
 
 extern media_playback_t *media_playback_create(const struct mp_media_info *info);

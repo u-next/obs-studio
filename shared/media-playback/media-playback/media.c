@@ -432,7 +432,6 @@ void mp_media_next_video(mp_media_t *m, bool preload)
 					m->sync_set = true;
 					m->sync_offset_ns = drift_ns;
 					m->next_ns = (int64_t)os_gettime_ns() + drift_ns;
-
 				} else {
 					m->next_ns += drift_ns / 100;
 				}
@@ -532,7 +531,9 @@ void mp_media_next_video(mp_media_t *m, bool preload)
 	}
 
 	if (!d->got_first_keyframe) {
-		if (!(f->flags & AV_FRAME_FLAG_KEY))
+		/* in dirty HEVC streams, it can be counter-productive to await the first keyframe when
+                   GOP is small. This primarily is a synchronization fix for large GOP sizes. */
+		if (!(f->flags & AV_FRAME_FLAG_KEY) && m->await_first_keyframe)
 			return;
 
 		d->got_first_keyframe = true;
@@ -953,6 +954,7 @@ bool mp_media_init(mp_media_t *media, const struct mp_media_info *info)
 	media->request_preload = info->request_preload;
 	media->is_local_file = info->is_local_file;
 	media->should_sync = info->sei_sync;
+	media->await_first_keyframe = info->await_first_keyframe;
 	da_init(media->packet_pool);
 
 	if (!info->is_local_file || media->speed < 1 || media->speed > 200)

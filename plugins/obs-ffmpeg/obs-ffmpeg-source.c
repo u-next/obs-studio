@@ -54,6 +54,7 @@ struct ffmpeg_source {
 	bool is_track_matte;
 	bool log_changes;
 	bool sei_sync;
+	bool await_first_keyframe;
 
 	pthread_t reconnect_thread;
 	pthread_mutex_t reconnect_mutex;
@@ -127,6 +128,8 @@ static void ffmpeg_source_defaults(obs_data_t *settings)
 	obs_data_set_default_int(settings, "speed_percent", 100);
 	obs_data_set_default_bool(settings, "unbuffered", false);
 	obs_data_set_default_bool(settings, "log_changes", true);
+	obs_data_set_default_bool(settings, "await_keyframe", true);
+	obs_data_set_default_bool(settings, "sei_sync", false);
 }
 
 static const char *media_filter =
@@ -198,6 +201,7 @@ static obs_properties_t *ffmpeg_source_getproperties(void *data)
 	prop = obs_properties_add_bool(props, "close_when_inactive", obs_module_text("CloseFileWhenInactive"));
 
 	prop = obs_properties_add_bool(props, "sei_sync", obs_module_text("SEISync"));
+	prop = obs_properties_add_bool(props, "await_keyframe", obs_module_text("AwaitFirstKeyframe"));
 
 	obs_property_set_long_description(prop, obs_module_text("CloseFileWhenInactive.ToolTip"));
 
@@ -316,6 +320,7 @@ static void ffmpeg_source_open(struct ffmpeg_source *s)
 			.request_preload = s->is_stinger,
 			.full_decode = s->full_decode,
 			.sei_sync = s->sei_sync,
+			.await_first_keyframe = s->await_first_keyframe,
 		};
 
 		s->media = media_playback_create(&info);
@@ -467,6 +472,7 @@ static void ffmpeg_source_update(void *data, obs_data_t *settings)
 	s->is_hw_decoding = is_hw_decoding;
 	s->full_decode = obs_data_get_bool(settings, "full_decode");
 	s->sei_sync = obs_data_get_bool(settings, "sei_sync");
+	s->await_first_keyframe = obs_data_get_bool(settings, "await_keyframe");
 	s->is_clear_on_media_end = obs_data_get_bool(settings, "clear_on_media_end");
 	s->restart_on_activate = !astrcmpi_n(input, RIST_PROTO, sizeof(RIST_PROTO) - 1)
 					 ? false
