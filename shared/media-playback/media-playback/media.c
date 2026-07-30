@@ -433,6 +433,7 @@ void mp_media_next_video(mp_media_t *m, bool preload)
 					m->sync_offset_ns = drift_ns;
 					m->next_ns = (int64_t)os_gettime_ns() + drift_ns;
 				} else {
+					/* approximate proportional component of 0.01=2/n+1 n~200 frames of impact*/
 					m->next_ns += drift_ns / 100;
 				}
 			}
