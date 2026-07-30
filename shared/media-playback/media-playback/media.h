@@ -103,6 +103,14 @@ struct mp_media {
 	bool seek;
 	bool seek_next_ts;
 	int64_t seek_pos;
+
+	/* if possible, we attempt to take SEI timestamps for sync. */
+	int64_t sync_offset_ns;
+	/* how long should we look into the future as a sync point? */
+	uint32_t sync_offset_seconds;
+	bool sync_set;
+	bool should_sync;
+	bool await_first_keyframe;
 };
 
 typedef struct mp_media mp_media_t;

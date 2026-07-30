@@ -17,6 +17,7 @@
 #include <util/platform.h>
 
 #include <assert.h>
+#include <sys/time.h>
 
 #include "media-playback.h"
 #include "media.h"
@@ -24,6 +25,7 @@
 
 #include <libavdevice/avdevice.h>
 #include <libavutil/imgutils.h>
+#include <libavutil/timecode.h>
 
 static int64_t base_sys_ts = 0;
 
@@ -365,12 +367,23 @@ void mp_media_next_audio(mp_media_t *m)
 	audio.format = convert_sample_format(f->format);
 	audio.frames = f->nb_samples;
 	audio.timestamp = m->full_decode ? d->frame_pts
-					 : m->base_ts + d->frame_pts - m->start_ts + m->play_sys_ts - base_sys_ts;
+					 : m->base_ts + d->frame_pts - m->start_ts + m->play_sys_ts - base_sys_ts +
+						   m->sync_offset_ns;
 
 	if (audio.format == AUDIO_FORMAT_UNKNOWN)
 		return;
 
 	m->a_cb(m->opaque, &audio);
+}
+
+/* stolen from timecode.c */
+static uint32_t bcd2uint(uint8_t bcd)
+{
+	uint32_t low = bcd & 0xf;
+	uint32_t high = bcd >> 4;
+	if (low > 9 || high > 9)
+		return 0;
+	return low + 10 * high;
 }
 
 void mp_media_next_video(mp_media_t *m, bool preload)
@@ -381,6 +394,51 @@ void mp_media_next_video(mp_media_t *m, bool preload)
 	enum video_colorspace new_space;
 	enum video_range_type new_range;
 	AVFrame *f = d->frame;
+
+	const uint32_t sync_offset_seconds = m->sync_offset_seconds;
+
+	/* To the extent possible, we want to respect SEI timestamps as a source of truth for synchronization.
+           This introduces some problems because there is /very little/ information in a SEI timestamp, we cannot
+           for example, assert confidently the timezone of the source stream. We can infer, but it is not contained
+           within. */
+	if (f && m->should_sync) {
+		AVFrameSideData *sd = av_frame_get_side_data(f, AV_FRAME_DATA_S12M_TIMECODE);
+		if (sd) {
+			const uint32_t tc_packed = ((uint32_t *)sd->data)[1];
+			const uint32_t hh = bcd2uint(tc_packed & 0x3f);
+			const uint32_t mm = bcd2uint(tc_packed >> 8 & 0x7f);
+			const uint32_t ss = bcd2uint(tc_packed >> 16 & 0x7f);
+			const uint32_t ff = bcd2uint(tc_packed >> 24 & 0x3f); /* fractional component */
+
+			double fps = (double)d->stream->avg_frame_rate.num / d->stream->avg_frame_rate.den;
+			int64_t frame_ns = (int64_t)((ff / fps) * 1000000000.0);
+			int64_t sei_ns = ((int64_t)hh * 3600 + (int64_t)mm * 60 + (int64_t)(ss + sync_offset_seconds)) *
+						 1000000000LL +
+					 frame_ns;
+
+			struct timeval tv;
+			gettimeofday(&tv, NULL);
+			struct tm *t = localtime(&tv.tv_sec); /* hello timezone hell */
+			const int64_t wall_ns =
+				((int64_t)t->tm_hour * 3600 + (int64_t)t->tm_min * 60 + (int64_t)t->tm_sec) *
+					1000000000LL +
+				(int64_t)tv.tv_usec * 1000;
+
+			const int64_t drift_ns = sei_ns - wall_ns;
+			if (drift_ns > 0) {
+				/* wait to set the base sync until we've received the first keyframe. This is
+                                   mostly important for x265 and NVDEC, which are a little less friendly than videotoolbox.*/
+				if (!m->sync_set && m->v.got_first_keyframe) {
+					m->sync_set = true;
+					m->sync_offset_ns = drift_ns;
+					m->next_ns = (int64_t)os_gettime_ns() + drift_ns;
+				} else {
+					/* approximate proportional component of 0.01=2/n+1 n~200 frames of impact*/
+					m->next_ns += drift_ns / 100;
+				}
+			}
+		}
+	}
 
 	if (!preload) {
 		if (!mp_media_can_play_frame(m, d))
@@ -446,7 +504,8 @@ void mp_media_next_video(mp_media_t *m, bool preload)
 		return;
 
 	frame->timestamp = m->full_decode ? d->frame_pts
-					  : (m->base_ts + d->frame_pts - m->start_ts + m->play_sys_ts - base_sys_ts);
+					  : (m->base_ts + d->frame_pts - m->start_ts + m->play_sys_ts - base_sys_ts +
+					     m->sync_offset_ns);
 
 	frame->width = f->width;
 	frame->height = f->height;
@@ -473,7 +532,9 @@ void mp_media_next_video(mp_media_t *m, bool preload)
 	}
 
 	if (!d->got_first_keyframe) {
-		if (!(f->flags & AV_FRAME_FLAG_KEY))
+		/* in dirty HEVC streams, it can be counter-productive to await the first keyframe when
+                   GOP is small. This primarily is a synchronization fix for large GOP sizes. */
+		if (!(f->flags & AV_FRAME_FLAG_KEY) && m->await_first_keyframe)
 			return;
 
 		d->got_first_keyframe = true;
@@ -555,6 +616,8 @@ bool mp_media_reset(mp_media_t *m)
 	m->eof = false;
 	m->base_ts += next_ts;
 	m->seek_next_ts = false;
+	m->sync_offset_ns = 0;
+	m->sync_set = false;
 
 	seek_to(m, start_time);
 
@@ -581,6 +644,9 @@ bool mp_media_reset(mp_media_t *m)
 
 	m->pause = false;
 
+	if (!m->is_local_file) {
+		m->v.got_first_keyframe = false;
+	}
 
 	if (!active && m->is_local_file && m->v_preload_cb)
 		mp_media_next_video(m, true);
@@ -888,6 +954,9 @@ bool mp_media_init(mp_media_t *media, const struct mp_media_info *info)
 	media->speed = info->speed;
 	media->request_preload = info->request_preload;
 	media->is_local_file = info->is_local_file;
+	media->should_sync = info->sei_sync;
+	media->sync_offset_seconds = info->sync_seconds;
+	media->await_first_keyframe = info->await_first_keyframe;
 	da_init(media->packet_pool);
 
 	if (!info->is_local_file || media->speed < 1 || media->speed > 200)

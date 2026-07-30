@@ -39,6 +39,7 @@ struct mp_media_info {
 	char *ffmpeg_options;
 	int buffering;
 	int speed;
+	int sync_seconds;
 	enum video_range_type force_range;
 	bool is_linear_alpha;
 	bool hardware_decoding;
@@ -46,6 +47,8 @@ struct mp_media_info {
 	bool reconnecting;
 	bool request_preload;
 	bool full_decode;
+	bool sei_sync;
+	bool await_first_keyframe;
 };
 
 extern media_playback_t *media_playback_create(const struct mp_media_info *info);
