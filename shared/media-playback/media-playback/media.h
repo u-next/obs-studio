@@ -106,6 +106,8 @@ struct mp_media {
 
 	/* if possible, we attempt to take SEI timestamps for sync. */
 	int64_t sync_offset_ns;
+	/* how long should we look into the future as a sync point? */
+	uint32_t sync_offset_seconds;
 	bool sync_set;
 	bool should_sync;
 	bool await_first_keyframe;

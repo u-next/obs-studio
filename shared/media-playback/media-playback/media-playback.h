@@ -39,6 +39,7 @@ struct mp_media_info {
 	char *ffmpeg_options;
 	int buffering;
 	int speed;
+	int sync_seconds;
 	enum video_range_type force_range;
 	bool is_linear_alpha;
 	bool hardware_decoding;

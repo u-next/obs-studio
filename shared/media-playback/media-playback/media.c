@@ -395,7 +395,7 @@ void mp_media_next_video(mp_media_t *m, bool preload)
 	enum video_range_type new_range;
 	AVFrame *f = d->frame;
 
-	const uint32_t sync_offset_seconds = 6;
+	const uint32_t sync_offset_seconds = m->sync_offset_seconds;
 
 	/* To the extent possible, we want to respect SEI timestamps as a source of truth for synchronization.
            This introduces some problems because there is /very little/ information in a SEI timestamp, we cannot
@@ -616,7 +616,7 @@ bool mp_media_reset(mp_media_t *m)
 	m->base_ts += next_ts;
 	m->seek_next_ts = false;
 	m->sync_offset_ns = 0;
-	m->sync_set = true;
+	m->sync_set = false;
 
 	seek_to(m, start_time);
 
@@ -954,6 +954,7 @@ bool mp_media_init(mp_media_t *media, const struct mp_media_info *info)
 	media->request_preload = info->request_preload;
 	media->is_local_file = info->is_local_file;
 	media->should_sync = info->sei_sync;
+	media->sync_offset_seconds = info->sync_seconds;
 	media->await_first_keyframe = info->await_first_keyframe;
 	da_init(media->packet_pool);
 
