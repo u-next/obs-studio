@@ -43,6 +43,7 @@ struct ffmpeg_source {
 	int buffering_mb;
 	int speed_percent;
 	int sync_seconds;
+	int maximum_desync_ms;
 	bool is_looping;
 	bool is_local_file;
 	bool is_hw_decoding;
@@ -56,6 +57,7 @@ struct ffmpeg_source {
 	bool log_changes;
 	bool sei_sync;
 	bool await_first_keyframe;
+	bool restart_on_desync;
 
 	pthread_t reconnect_thread;
 	pthread_mutex_t reconnect_mutex;
@@ -92,11 +94,14 @@ static void set_media_state(void *data, enum obs_media_state state)
 	s->state = state;
 }
 
-static bool is_local_file_modified(obs_properties_t *props, obs_property_t *prop, obs_data_t *settings)
+static bool bool_flag_modified(obs_properties_t *props, obs_property_t *prop, obs_data_t *settings)
 {
 	UNUSED_PARAMETER(prop);
 
 	bool enabled = obs_data_get_bool(settings, "is_local_file");
+	bool should_restart_on_desync = obs_data_get_bool(settings, "restart_on_desync");
+	bool should_sync = obs_data_get_bool(settings, "sei_sync");
+
 	obs_property_t *input = obs_properties_get(props, "input");
 	obs_property_t *input_format = obs_properties_get(props, "input_format");
 	obs_property_t *local_file = obs_properties_get(props, "local_file");
@@ -107,7 +112,10 @@ static bool is_local_file_modified(obs_properties_t *props, obs_property_t *prop
 	obs_property_t *reconnect_delay_sec = obs_properties_get(props, "reconnect_delay_sec");
 	obs_property_t *sei_sync = obs_properties_get(props, "sei_sync");
 	obs_property_t *sync_seconds = obs_properties_get(props, "sync_seconds");
+	obs_property_t *maximum_desync_ms = obs_properties_get(props, "maximum_desync_ms");
 	obs_property_t *await_keyframe = obs_properties_get(props, "await_keyframe");
+	obs_property_t *restart_on_desync = obs_properties_get(props, "restart_on_desync");
+
 	obs_property_set_visible(input, !enabled);
 	obs_property_set_visible(input_format, !enabled);
 	obs_property_set_visible(buffering, !enabled);
@@ -117,8 +125,10 @@ static bool is_local_file_modified(obs_properties_t *props, obs_property_t *prop
 	obs_property_set_visible(seekable, !enabled);
 	obs_property_set_visible(reconnect_delay_sec, !enabled);
 	obs_property_set_visible(sei_sync, !enabled);
-	obs_property_set_visible(sync_seconds, !enabled);
+	obs_property_set_visible(sync_seconds, !enabled && should_sync);
+	obs_property_set_visible(maximum_desync_ms, !enabled && should_restart_on_desync);
 	obs_property_set_visible(await_keyframe, !enabled);
+	obs_property_set_visible(restart_on_desync, !enabled);
 
 	return true;
 }
@@ -134,9 +144,11 @@ static void ffmpeg_source_defaults(obs_data_t *settings)
 	obs_data_set_default_int(settings, "buffering_mb", 2);
 	obs_data_set_default_int(settings, "speed_percent", 100);
 	obs_data_set_default_int(settings, "sync_seconds", 6);
+	obs_data_set_default_int(settings, "maximum_desync_ms", 1000);
 	obs_data_set_default_bool(settings, "unbuffered", false);
 	obs_data_set_default_bool(settings, "log_changes", true);
 	obs_data_set_default_bool(settings, "await_keyframe", true);
+	obs_data_set_default_bool(settings, "restart_on_desync", true);
 	obs_data_set_default_bool(settings, "sei_sync", false);
 }
 
@@ -159,7 +171,7 @@ static obs_properties_t *ffmpeg_source_getproperties(void *data)
 	// use this when obs allows non-readonly paths
 	prop = obs_properties_add_bool(props, "is_local_file", obs_module_text("LocalFile"));
 
-	obs_property_set_modified_callback(prop, is_local_file_modified);
+	obs_property_set_modified_callback(prop, bool_flag_modified);
 
 	dstr_copy(&filter, obs_module_text("MediaFileFilter.AllMediaFiles"));
 	dstr_cat(&filter, media_filter);
@@ -210,13 +222,22 @@ static obs_properties_t *ffmpeg_source_getproperties(void *data)
 	obs_property_set_long_description(prop, obs_module_text("CloseFileWhenInactive.ToolTip"));
 
 	prop = obs_properties_add_bool(props, "sei_sync", obs_module_text("SEISync"));
+	obs_property_set_modified_callback(prop, bool_flag_modified);
+
 	prop = obs_properties_add_bool(props, "await_keyframe", obs_module_text("AwaitFirstKeyframe"));
+
+	prop = obs_properties_add_bool(props, "restart_on_desync", obs_module_text("RestartOnDesync"));
+	obs_property_set_modified_callback(prop, bool_flag_modified);
 
 	prop = obs_properties_add_int_slider(props, "speed_percent", obs_module_text("SpeedPercentage"), 1, 200, 1);
 	obs_property_int_set_suffix(prop, "%");
 
-	prop = obs_properties_add_int_slider(props, "sync_seconds", obs_module_text("SyncSeconds"), 1, 10, 2);
+	prop = obs_properties_add_int_slider(props, "sync_seconds", obs_module_text("SyncSeconds"), 1, 10, 1);
 	obs_property_int_set_suffix(prop, "s");
+
+	prop = obs_properties_add_int_slider(props, "maximum_desync_ms", obs_module_text("MaximumDesyncMs"), 0, 5000,
+					     500);
+	obs_property_int_set_suffix(prop, "ms");
 
 	prop = obs_properties_add_list(props, "color_range", obs_module_text("ColorRange"), OBS_COMBO_TYPE_LIST,
 				       OBS_COMBO_FORMAT_INT);
@@ -332,6 +353,8 @@ static void ffmpeg_source_open(struct ffmpeg_source *s)
 			.sei_sync = s->sei_sync,
 			.sync_seconds = s->sync_seconds,
 			.await_first_keyframe = s->await_first_keyframe,
+			.restart_on_desync = s->restart_on_desync,
+			.maximum_desync_ms = s->maximum_desync_ms,
 		};
 
 		s->media = media_playback_create(&info);
@@ -406,6 +429,12 @@ static void ffmpeg_source_tick(void *data, float seconds)
 			s->reconnect_thread_valid = true;
 			pthread_mutex_unlock(&s->reconnect_mutex);
 		}
+	}
+
+	/* the underlying media engine has requested a full reset.
+           the SEI sync subsystem will request this when we end up catostrophic. */
+	if (s->media && media_playback_should_reset(s->media)) {
+		obs_source_update(s->source, NULL);
 	}
 }
 
@@ -484,7 +513,10 @@ static void ffmpeg_source_update(void *data, obs_data_t *settings)
 	s->full_decode = obs_data_get_bool(settings, "full_decode");
 	s->sei_sync = obs_data_get_bool(settings, "sei_sync");
 	s->sync_seconds = obs_data_get_int(settings, "sync_seconds");
+	s->maximum_desync_ms = obs_data_get_int(settings, "maximum_desync_ms");
 	s->await_first_keyframe = obs_data_get_bool(settings, "await_keyframe");
+	s->restart_on_desync = obs_data_get_bool(settings, "restart_on_desync");
+
 	s->is_clear_on_media_end = obs_data_get_bool(settings, "clear_on_media_end");
 	s->restart_on_activate = !astrcmpi_n(input, RIST_PROTO, sizeof(RIST_PROTO) - 1)
 					 ? false

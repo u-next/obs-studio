@@ -49,6 +49,8 @@ struct mp_media_info {
 	bool full_decode;
 	bool sei_sync;
 	bool await_first_keyframe;
+	bool restart_on_desync;
+	int maximum_desync_ms;
 };
 
 extern media_playback_t *media_playback_create(const struct mp_media_info *info);
@@ -66,3 +68,4 @@ extern int64_t media_playback_get_frames(media_playback_t *mp);
 extern int64_t media_playback_get_duration(media_playback_t *mp);
 extern bool media_playback_has_video(media_playback_t *mp);
 extern bool media_playback_has_audio(media_playback_t *mp);
+extern bool media_playback_should_reset(media_playback_t *mp);

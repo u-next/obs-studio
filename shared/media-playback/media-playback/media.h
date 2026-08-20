@@ -111,6 +111,9 @@ struct mp_media {
 	bool sync_set;
 	bool should_sync;
 	bool await_first_keyframe;
+	bool reset_source;
+	bool restart_on_desync;
+	int64_t maximum_desync_ms;
 };
 
 typedef struct mp_media mp_media_t;
