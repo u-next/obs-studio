@@ -398,6 +398,7 @@ void mp_media_next_video(mp_media_t *m, bool preload)
 	AVFrame *f = d->frame;
 
 	const uint32_t sync_offset_seconds = m->sync_offset_seconds;
+	const int64_t maximum_desync_ns = -m->maximum_desync_ms * 1000000;
 
 	/* To the extent possible, we want to respect SEI timestamps as a source of truth for synchronization.
            This introduces some problems because there is /very little/ information in a SEI timestamp, we cannot
@@ -415,6 +416,8 @@ void mp_media_next_video(mp_media_t *m, bool preload)
 
 			double fps = (double)d->stream->avg_frame_rate.num / d->stream->avg_frame_rate.den;
 			int64_t frame_ns = (int64_t)((ff / fps) * 1000000000.0);
+			/* we assign a set point to be some amount of time in the future from the source time
+                           as a rendezvous point. */
 			int64_t sei_ns = ((int64_t)hh * 3600 + (int64_t)mm * 60 + (int64_t)(ss + sync_offset_seconds)) *
 						 1000000000LL +
 					 frame_ns;
@@ -428,10 +431,13 @@ void mp_media_next_video(mp_media_t *m, bool preload)
 
 			const int64_t drift_ns = sei_ns - wall_ns;
 
-			printf("%c %" PRIu32 ":%" PRIu32 ":%" PRIu32 " to %" PRIu32 ":%" PRIu32 ":%" PRIu32 " % " PRId64
-			       " %d\n",
-			       m->path[37], hh, mm, ss, t->tm_hour, t->tm_min, t->tm_sec, drift_ns, m->sync_set);
+			blog(LOG_INFO,
+			     "MP: SEI received from %s. sei_time=%" PRIu32 ":%" PRIu32 ":%" PRIu32 ";%" PRIu32
+			     " target_time=%" PRIu32 ":%" PRIu32 ":%" PRIu32 " drift=%" PRId64 "\n",
+			     m->path, hh, mm, ss, ff, t->tm_hour, t->tm_min, t->tm_sec, drift_ns);
+
 			if (drift_ns > 0) {
+				m->reset_source = false;
 				/* wait to set the base sync until we've received the first keyframe. This is
                                    mostly important for x265 and NVDEC, which are a little less friendly than videotoolbox.*/
 				if (!m->sync_set && m->v.got_first_keyframe) {
@@ -442,11 +448,13 @@ void mp_media_next_video(mp_media_t *m, bool preload)
 					/* approximate proportional component of 0.01=2/n+1 n~200 frames of impact*/
 					m->next_ns += drift_ns / 100;
 				}
-			} else if (m->restart_on_desync && drift_ns < -m->maximum_desync_ms) {
+			} else if (m->restart_on_desync && drift_ns < maximum_desync_ns && m->reset_source == false) {
 				/* if we end up behind by a preset amount of time, restart the source. This
                                    takes care of a case in which an SEI source restarts and ends up sending
                                    data from the past.*/
-				printf("RESET! %c, %" PRId64 "\n", m->path[37], drift_ns);
+				blog(LOG_WARNING,
+				     "SEI-drift-based source RESET! %s, drift=%" PRId64 " max=%" PRId64 "\n", m->path,
+				     drift_ns, m->maximum_desync_ms);
 				m->reset_source = true;
 				return;
 			}
