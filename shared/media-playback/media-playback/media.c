@@ -442,9 +442,10 @@ void mp_media_next_video(mp_media_t *m, bool preload)
 					/* approximate proportional component of 0.01=2/n+1 n~200 frames of impact*/
 					m->next_ns += drift_ns / 100;
 				}
-			} else if (m->restart_on_desync && drift_ns < -500000000LL) {
-				/* if we're more than 500 milliseconds in the past, reset.
-                                  Frequent resets is an indication that your time buffering is insufficient.*/
+			} else if (m->restart_on_desync && drift_ns < -m->maximum_desync_ms) {
+				/* if we end up behind by a preset amount of time, restart the source. This
+                                   takes care of a case in which an SEI source restarts and ends up sending
+                                   data from the past.*/
 				printf("RESET! %c, %" PRId64 "\n", m->path[37], drift_ns);
 				m->reset_source = true;
 				return;
@@ -1005,6 +1006,7 @@ bool mp_media_init(mp_media_t *media, const struct mp_media_info *info)
 	media->sync_offset_seconds = info->sync_seconds;
 	media->await_first_keyframe = info->await_first_keyframe;
 	media->restart_on_desync = info->restart_on_desync;
+	media->maximum_desync_ms = info->maximum_desync_ms;
 	da_init(media->packet_pool);
 
 	if (!info->is_local_file || media->speed < 1 || media->speed > 200)

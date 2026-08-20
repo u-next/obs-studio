@@ -50,6 +50,7 @@ struct mp_media_info {
 	bool sei_sync;
 	bool await_first_keyframe;
 	bool restart_on_desync;
+	int maximum_desync_ms;
 };
 
 extern media_playback_t *media_playback_create(const struct mp_media_info *info);
