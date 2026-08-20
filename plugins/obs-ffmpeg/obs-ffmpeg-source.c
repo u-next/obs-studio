@@ -56,6 +56,7 @@ struct ffmpeg_source {
 	bool log_changes;
 	bool sei_sync;
 	bool await_first_keyframe;
+	bool restart_on_desync;
 
 	pthread_t reconnect_thread;
 	pthread_mutex_t reconnect_mutex;
@@ -108,6 +109,7 @@ static bool is_local_file_modified(obs_properties_t *props, obs_property_t *prop
 	obs_property_t *sei_sync = obs_properties_get(props, "sei_sync");
 	obs_property_t *sync_seconds = obs_properties_get(props, "sync_seconds");
 	obs_property_t *await_keyframe = obs_properties_get(props, "await_keyframe");
+	obs_property_t *restart_on_desync = obs_properties_get(props, "restart_on_desync");
 	obs_property_set_visible(input, !enabled);
 	obs_property_set_visible(input_format, !enabled);
 	obs_property_set_visible(buffering, !enabled);
@@ -119,6 +121,7 @@ static bool is_local_file_modified(obs_properties_t *props, obs_property_t *prop
 	obs_property_set_visible(sei_sync, !enabled);
 	obs_property_set_visible(sync_seconds, !enabled);
 	obs_property_set_visible(await_keyframe, !enabled);
+	obs_property_set_visible(restart_on_desync, !enabled);
 
 	return true;
 }
@@ -137,6 +140,7 @@ static void ffmpeg_source_defaults(obs_data_t *settings)
 	obs_data_set_default_bool(settings, "unbuffered", false);
 	obs_data_set_default_bool(settings, "log_changes", true);
 	obs_data_set_default_bool(settings, "await_keyframe", true);
+	obs_data_set_default_bool(settings, "restart_on_desync", true);
 	obs_data_set_default_bool(settings, "sei_sync", false);
 }
 
@@ -211,6 +215,7 @@ static obs_properties_t *ffmpeg_source_getproperties(void *data)
 
 	prop = obs_properties_add_bool(props, "sei_sync", obs_module_text("SEISync"));
 	prop = obs_properties_add_bool(props, "await_keyframe", obs_module_text("AwaitFirstKeyframe"));
+	prop = obs_properties_add_bool(props, "restart_on_desync", obs_module_text("RestartOnDesync"));
 
 	prop = obs_properties_add_int_slider(props, "speed_percent", obs_module_text("SpeedPercentage"), 1, 200, 1);
 	obs_property_int_set_suffix(prop, "%");
@@ -332,6 +337,7 @@ static void ffmpeg_source_open(struct ffmpeg_source *s)
 			.sei_sync = s->sei_sync,
 			.sync_seconds = s->sync_seconds,
 			.await_first_keyframe = s->await_first_keyframe,
+			.restart_on_desync = s->restart_on_desync,
 		};
 
 		s->media = media_playback_create(&info);
@@ -406,6 +412,12 @@ static void ffmpeg_source_tick(void *data, float seconds)
 			s->reconnect_thread_valid = true;
 			pthread_mutex_unlock(&s->reconnect_mutex);
 		}
+	}
+
+	/* the underlying media engine has requested a full reset.
+           the SEI sync subsystem will request this when we end up catostrophic. */
+	if (s->media && media_playback_should_reset(s->media)) {
+		obs_source_update(s->source, NULL);
 	}
 }
 
@@ -485,6 +497,8 @@ static void ffmpeg_source_update(void *data, obs_data_t *settings)
 	s->sei_sync = obs_data_get_bool(settings, "sei_sync");
 	s->sync_seconds = obs_data_get_int(settings, "sync_seconds");
 	s->await_first_keyframe = obs_data_get_bool(settings, "await_keyframe");
+	s->restart_on_desync = obs_data_get_bool(settings, "restart_on_desync");
+
 	s->is_clear_on_media_end = obs_data_get_bool(settings, "clear_on_media_end");
 	s->restart_on_activate = !astrcmpi_n(input, RIST_PROTO, sizeof(RIST_PROTO) - 1)
 					 ? false

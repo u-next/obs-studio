@@ -29,6 +29,8 @@
 
 static int64_t base_sys_ts = 0;
 
+bool mp_media_reset(mp_media_t *m);
+
 static inline enum video_format convert_pixel_format(int f)
 {
 	switch (f) {
@@ -401,6 +403,7 @@ void mp_media_next_video(mp_media_t *m, bool preload)
            This introduces some problems because there is /very little/ information in a SEI timestamp, we cannot
            for example, assert confidently the timezone of the source stream. We can infer, but it is not contained
            within. */
+
 	if (f && m->should_sync) {
 		AVFrameSideData *sd = av_frame_get_side_data(f, AV_FRAME_DATA_S12M_TIMECODE);
 		if (sd) {
@@ -415,7 +418,6 @@ void mp_media_next_video(mp_media_t *m, bool preload)
 			int64_t sei_ns = ((int64_t)hh * 3600 + (int64_t)mm * 60 + (int64_t)(ss + sync_offset_seconds)) *
 						 1000000000LL +
 					 frame_ns;
-
 			struct timeval tv;
 			gettimeofday(&tv, NULL);
 			struct tm *t = localtime(&tv.tv_sec); /* hello timezone hell */
@@ -425,6 +427,10 @@ void mp_media_next_video(mp_media_t *m, bool preload)
 				(int64_t)tv.tv_usec * 1000;
 
 			const int64_t drift_ns = sei_ns - wall_ns;
+
+			printf("%c %" PRIu32 ":%" PRIu32 ":%" PRIu32 " to %" PRIu32 ":%" PRIu32 ":%" PRIu32 " % " PRId64
+			       " %d\n",
+			       m->path[37], hh, mm, ss, t->tm_hour, t->tm_min, t->tm_sec, drift_ns, m->sync_set);
 			if (drift_ns > 0) {
 				/* wait to set the base sync until we've received the first keyframe. This is
                                    mostly important for x265 and NVDEC, which are a little less friendly than videotoolbox.*/
@@ -436,6 +442,12 @@ void mp_media_next_video(mp_media_t *m, bool preload)
 					/* approximate proportional component of 0.01=2/n+1 n~200 frames of impact*/
 					m->next_ns += drift_ns / 100;
 				}
+			} else if (m->restart_on_desync && drift_ns < -500000000LL) {
+				/* if we're more than 500 milliseconds in the past, reset.
+                                  Frequent resets is an indication that your time buffering is insufficient.*/
+				printf("RESET! %c, %" PRId64 "\n", m->path[37], drift_ns);
+				m->reset_source = true;
+				return;
 			}
 		}
 	}
@@ -937,49 +949,6 @@ static inline bool mp_media_init_internal(mp_media_t *m, const struct mp_media_i
 	return true;
 }
 
-bool mp_media_init(mp_media_t *media, const struct mp_media_info *info)
-{
-	memset(media, 0, sizeof(*media));
-	pthread_mutex_init_value(&media->mutex);
-	media->opaque = info->opaque;
-	media->v_cb = info->v_cb;
-	media->a_cb = info->a_cb;
-	media->stop_cb = info->stop_cb;
-	media->ffmpeg_options = info->ffmpeg_options;
-	media->v_seek_cb = info->v_seek_cb;
-	media->v_preload_cb = info->v_preload_cb;
-	media->force_range = info->force_range;
-	media->is_linear_alpha = info->is_linear_alpha;
-	media->buffering = info->buffering;
-	media->speed = info->speed;
-	media->request_preload = info->request_preload;
-	media->is_local_file = info->is_local_file;
-	media->should_sync = info->sei_sync;
-	media->sync_offset_seconds = info->sync_seconds;
-	media->await_first_keyframe = info->await_first_keyframe;
-	da_init(media->packet_pool);
-
-	if (!info->is_local_file || media->speed < 1 || media->speed > 200)
-		media->speed = 100;
-
-	static bool initialized = false;
-	if (!initialized) {
-		avdevice_register_all();
-		avformat_network_init();
-		initialized = true;
-	}
-
-	if (!base_sys_ts)
-		base_sys_ts = (int64_t)os_gettime_ns();
-
-	if (!mp_media_init_internal(media, info)) {
-		mp_media_free(media);
-		return false;
-	}
-
-	return true;
-}
-
 static void mp_kill_thread(mp_media_t *m)
 {
 	if (m->thread_valid) {
@@ -1013,6 +982,50 @@ void mp_media_free(mp_media_t *media)
 	bfree(media->format_name);
 	memset(media, 0, sizeof(*media));
 	pthread_mutex_init_value(&media->mutex);
+}
+
+bool mp_media_init(mp_media_t *media, const struct mp_media_info *info)
+{
+	memset(media, 0, sizeof(*media));
+	pthread_mutex_init_value(&media->mutex);
+	media->opaque = info->opaque;
+	media->v_cb = info->v_cb;
+	media->a_cb = info->a_cb;
+	media->stop_cb = info->stop_cb;
+	media->ffmpeg_options = info->ffmpeg_options;
+	media->v_seek_cb = info->v_seek_cb;
+	media->v_preload_cb = info->v_preload_cb;
+	media->force_range = info->force_range;
+	media->is_linear_alpha = info->is_linear_alpha;
+	media->buffering = info->buffering;
+	media->speed = info->speed;
+	media->request_preload = info->request_preload;
+	media->is_local_file = info->is_local_file;
+	media->should_sync = info->sei_sync;
+	media->sync_offset_seconds = info->sync_seconds;
+	media->await_first_keyframe = info->await_first_keyframe;
+	media->restart_on_desync = info->restart_on_desync;
+	da_init(media->packet_pool);
+
+	if (!info->is_local_file || media->speed < 1 || media->speed > 200)
+		media->speed = 100;
+
+	static bool initialized = false;
+	if (!initialized) {
+		avdevice_register_all();
+		avformat_network_init();
+		initialized = true;
+	}
+
+	if (!base_sys_ts)
+		base_sys_ts = (int64_t)os_gettime_ns();
+
+	if (!mp_media_init_internal(media, info)) {
+		mp_media_free(media);
+		return false;
+	}
+
+	return true;
 }
 
 void mp_media_play(mp_media_t *m, bool loop, bool reconnecting)

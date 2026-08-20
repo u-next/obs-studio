@@ -174,3 +174,8 @@ bool media_playback_has_audio(media_playback_t *mp)
 	else
 		return mp->media.has_audio;
 }
+
+bool media_playback_should_reset(media_playback_t *mp)
+{
+	return !mp->is_cached && mp->media.reset_source;
+}
