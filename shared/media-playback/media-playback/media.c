@@ -14,6 +14,7 @@
  * OR IN CONNECTION WITH THE USE OR PERFORMANCE OF THIS SOFTWARE.
  */
 
+#include <libavutil/frame.h>
 #include <util/platform.h>
 
 #include <assert.h>
@@ -402,6 +403,33 @@ void mp_media_next_video(mp_media_t *m, bool preload)
            for example, assert confidently the timezone of the source stream. We can infer, but it is not contained
            within. */
 	if (f && m->should_sync) {
+		AVFrameSideData *cd = av_frame_get_side_data(f, AV_FRAME_DATA_SEI_UNREGISTERED);
+		if (cd) {
+			const int64_t sei_ns = *(int64_t *)cd->data + ((int64_t)sync_offset_seconds * 1000000000LL);
+
+			struct timeval tv;
+			gettimeofday(&tv, NULL);
+			struct tm *t = localtime(&tv.tv_sec); /* hello timezone hell */
+			const int64_t wall_ns =
+				((int64_t)t->tm_hour * 3600 + (int64_t)t->tm_min * 60 + (int64_t)t->tm_sec) *
+					1000000000LL +
+				(int64_t)tv.tv_usec * 1000;
+
+			const int64_t drift_ns = sei_ns - wall_ns;
+
+			if (drift_ns > 0) {
+				/* wait to set the base sync until we've received the first keyframe. This is
+                                   mostly important for x265 and NVDEC, which are a little less friendly than videotoolbox.*/
+				if (!m->sync_set && m->v.got_first_keyframe) {
+					m->sync_set = true;
+					m->sync_offset_ns = drift_ns;
+					m->next_ns = (int64_t)os_gettime_ns() + drift_ns;
+				} else {
+					/* approximate proportional component of 0.01=2/n+1 n~200 frames of impact*/
+					m->next_ns += drift_ns / 100;
+				}
+			}
+		}
 		AVFrameSideData *sd = av_frame_get_side_data(f, AV_FRAME_DATA_S12M_TIMECODE);
 		if (sd) {
 			const uint32_t tc_packed = ((uint32_t *)sd->data)[1];
