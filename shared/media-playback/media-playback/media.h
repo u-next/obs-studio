@@ -111,6 +111,11 @@ struct mp_media {
 	bool sync_set;
 	bool should_sync;
 	bool await_first_keyframe;
+
+	/* this is just another laugh, really. Experimenting with using NTP to align
+           multiple OBS instances.*/
+	int64_t ntp_offset_us;
+	bool default_lag_calculated;
 };
 
 typedef struct mp_media mp_media_t;

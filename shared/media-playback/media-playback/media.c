@@ -17,7 +17,18 @@
 #include <libavutil/frame.h>
 #include <util/platform.h>
 
-#include <assert.h>
+#include <math.h>
+#include <netinet/in.h>
+#include <stdint.h>
+#include <stdlib.h>
+#include <netdb.h>
+#include <sys/socket.h>
+#include <unistd.h>
+#include <arpa/inet.h>
+#include <stdio.h>
+#include <string.h>
+#include <inttypes.h>
+#include <errno.h>
 #include <sys/time.h>
 
 #include "media-playback.h"
@@ -193,6 +204,146 @@ static int mp_media_next_packet(mp_media_t *media)
 	}
 
 	return ret;
+}
+
+struct __attribute__((__packed__)) ntp_timestamp {
+	uint32_t seconds;
+	uint32_t fraction;
+};
+
+/* basic NTP packet using wikipedia's names. */
+struct __attribute__((__packed__)) ntp_packet {
+	uint8_t li_vn_mode;
+	uint8_t stratum;
+	uint8_t poll;
+	uint8_t precision;
+
+	uint32_t root_delay;
+	uint32_t root_precision;
+	uint32_t reference_id;
+
+	struct ntp_timestamp reference_timestamp;
+	struct ntp_timestamp origin_timestamp;
+	struct ntp_timestamp receive_timestamp;
+	struct ntp_timestamp transmit_timestamp;
+};
+
+/* populate an NTP packet with timing information. */
+static int fetch_time(struct ntp_packet *packet, struct sockaddr_in *servaddr)
+{
+	static struct timeval timeout = {0, 100000}; /* 3 second */
+
+	int sockfd;
+	int res;
+
+	memset(packet, 0, sizeof(struct ntp_packet));
+
+	/* no leap warning, version=3, mode=client(3) */
+	*((char *)packet + 0) = 0b00011011;
+
+	sockfd = socket(AF_INET, SOCK_DGRAM, IPPROTO_UDP);
+	if (sockfd < 0) {
+		fprintf(stderr, "ERROR: Failed to create socket. errno=%d", errno);
+		return -1; /* don't close on an invalid socket */
+	}
+
+	res = setsockopt(sockfd, SOL_SOCKET, SO_RCVTIMEO, &timeout, sizeof(struct timeval));
+	if (res < 0) {
+		fprintf(stderr, "ERROR: Could not set sockopt for timeout on rcv\n");
+		goto done;
+	}
+
+	res = connect(sockfd, (struct sockaddr *)servaddr, sizeof(struct sockaddr_in));
+	if (res < 0) {
+		goto done;
+	}
+	res = write(sockfd, packet, sizeof(struct ntp_packet));
+	if (res < 0) {
+		fprintf(stderr, "ERROR: Could not write\n");
+		goto done;
+	}
+	res = read(sockfd, packet, sizeof(struct ntp_packet));
+	if (res < (int)sizeof(struct ntp_packet)) {
+		fprintf(stderr, "ERROR: Could not read errno=%d\n", errno);
+		goto done;
+	}
+
+done:
+	close(sockfd);
+	return res;
+}
+
+/* NTP uses jan 1st 1900, gettimeofday(2) uses jan 1st 1970. offset taken from RFC-868 */
+static const uint32_t unix_to_ntp = 2208988800UL;
+
+/* convert from a network order NTP timestamp to a host order struct timeval
+   adapted from https://tickelton.gitlab.io/articles/ntp-timestamps/ */
+static void ntp_to_timeval(struct ntp_timestamp *ntp, struct timeval *tv)
+{
+	tv->tv_sec = ntohl(ntp->seconds) - unix_to_ntp;
+	/* an ntp fraction is N/(2^32), so we convert the value itself to usec
+       and then divide by 2^32. */
+	tv->tv_usec = (uint32_t)((double)ntohl(ntp->fraction) * 1.0e6 / (double)(1LL << 32));
+}
+
+int get_ntp_offset_us(int64_t *result)
+{
+	struct ntp_packet packet; /* i/o packet */
+
+	/* in order to capture RTT, time we need to capture a somewhat equivalent timestamp
+       in client time as well. We have no hope of being comparable in the fractional segment
+       which is sub-ns, but we are dealing within multiples of 33ms and 16ms anyways. */
+	struct timeval client_send_time, client_recv_time, server_recv_time, server_send_time;
+	struct timezone tz = {0, 0}; /* NTP is all in UTC */
+
+	int res;
+
+	struct hostent *server;
+	struct sockaddr_in servaddr;
+	memset(&servaddr, 0, sizeof(struct sockaddr_in));
+	server = gethostbyname("0.jp.pool.ntp.org");
+	if (server == NULL) {
+		fprintf(stderr, "ERROR: Failed to lookup NTP server by name.\n");
+		return -1;
+	}
+
+	servaddr.sin_family = AF_INET;
+	memcpy(&servaddr.sin_addr.s_addr, server->h_addr_list[0], server->h_length);
+
+	servaddr.sin_port = htons(123);
+
+	for (;;) {
+		res = gettimeofday(&client_send_time, &tz); /* start client time */
+
+		res = fetch_time(&packet, &servaddr);
+		if (res < 0) {
+			if (errno == EAGAIN || errno == EWOULDBLOCK) {
+				continue;
+			} else {
+				return -1;
+			}
+		}
+
+		res = gettimeofday(&client_recv_time, &tz); /* recv client time */
+
+		/* get them in struct timeval form with host order */
+		ntp_to_timeval(&packet.transmit_timestamp, &server_send_time);
+		ntp_to_timeval(&packet.receive_timestamp, &server_recv_time);
+
+		const int64_t sec_to_usec = 1000000LL;
+
+		const int64_t t1 = (client_send_time.tv_sec * sec_to_usec) + client_send_time.tv_usec;
+		const int64_t t2 = (server_recv_time.tv_sec * sec_to_usec) + server_recv_time.tv_usec;
+		const int64_t t3 = (server_send_time.tv_sec * sec_to_usec) + server_send_time.tv_usec;
+		const int64_t t4 = (client_recv_time.tv_sec * sec_to_usec) + client_recv_time.tv_usec;
+
+		const int64_t theta = ((t2 - t1) + (t3 - t4)) / 2;
+
+		*result = theta;
+		break;
+	}
+
+	return 0;
 }
 
 static inline bool mp_media_ready_to_start(mp_media_t *m)
@@ -387,6 +538,23 @@ static uint32_t bcd2uint(uint8_t bcd)
 	return low + 10 * high;
 }
 
+/* find the lag value to use, nearest second. */
+static int64_t get_default_lag_s(int64_t sei_ns, int64_t ntp_offset_us)
+{
+	const int64_t us_to_s = 1000LL * 1000LL * 1000LL;
+	struct timeval tv;
+	gettimeofday(&tv, NULL);
+	struct tm *t = localtime(&tv.tv_sec); /* hello timezone hell */
+	const int64_t wall_ns =
+		(((int64_t)t->tm_hour * 3600 + (int64_t)t->tm_min * 60 + (int64_t)t->tm_sec) * 1000000000LL +
+		 (int64_t)tv.tv_usec * 1000) +
+		(ntp_offset_us * 1000); /* NTP offset. */
+
+	const int64_t lag = wall_ns - sei_ns;
+
+	return (lag / us_to_s) + 1; /* round to the nearest second + 1*/
+}
+
 void mp_media_next_video(mp_media_t *m, bool preload)
 {
 	struct mp_decode *d = &m->v;
@@ -405,17 +573,26 @@ void mp_media_next_video(mp_media_t *m, bool preload)
 	if (f && m->should_sync) {
 		AVFrameSideData *cd = av_frame_get_side_data(f, AV_FRAME_DATA_SEI_UNREGISTERED);
 		if (cd) {
+			if (!m->default_lag_calculated) {
+				m->default_lag_calculated = true;
+				m->sync_offset_seconds = get_default_lag_s(*(int64_t *)cd->data, m->ntp_offset_us);
+				printf("calculated seconds %'" PRIu32 "\n", m->sync_offset_seconds);
+			}
+
 			const int64_t sei_ns = *(int64_t *)cd->data + ((int64_t)sync_offset_seconds * 1000000000LL);
 
 			struct timeval tv;
 			gettimeofday(&tv, NULL);
 			struct tm *t = localtime(&tv.tv_sec); /* hello timezone hell */
 			const int64_t wall_ns =
-				((int64_t)t->tm_hour * 3600 + (int64_t)t->tm_min * 60 + (int64_t)t->tm_sec) *
-					1000000000LL +
-				(int64_t)tv.tv_usec * 1000;
+				(((int64_t)t->tm_hour * 3600 + (int64_t)t->tm_min * 60 + (int64_t)t->tm_sec) *
+					 1000000000LL +
+				 (int64_t)tv.tv_usec * 1000) +
+				(m->ntp_offset_us * 1000); /* NTP offset. */
 
 			const int64_t drift_ns = sei_ns - wall_ns;
+			printf("walltime: %d:%d:%d %'" PRId64 "\n", t->tm_hour, t->tm_min, t->tm_sec,
+			       drift_ns / 1000 / 1000);
 
 			if (drift_ns > 0) {
 				/* wait to set the base sync until we've received the first keyframe. This is
@@ -646,6 +823,7 @@ bool mp_media_reset(mp_media_t *m)
 	m->seek_next_ts = false;
 	m->sync_offset_ns = 0;
 	m->sync_set = false;
+	m->default_lag_calculated = false;
 
 	seek_to(m, start_time);
 
@@ -839,6 +1017,14 @@ static inline bool mp_media_thread(mp_media_t *m)
 	}
 	if (!mp_media_reset(m)) {
 		return false;
+	}
+
+	if (m->should_sync) {
+		if (m->ntp_offset_us == 0 && get_ntp_offset_us(&m->ntp_offset_us)) {
+			blog(LOG_ERROR, "Failed to setup ntp. Defaulting to zero offset.\n");
+			m->ntp_offset_us = 0;
+		}
+		blog(LOG_INFO, "NTP calculated at offset %" PRId64 "us\n", m->ntp_offset_us);
 	}
 
 	for (;;) {
